@@ -78,3 +78,16 @@ good as of 2026-08-19; LMCache on 0.27.1 still needs a fixed 0.5.3
 
 Details, versions, benches, and upstream issue links:
 [FIELD_NOTES.md](FIELD_NOTES.md).
+
+## Models (HuggingFace)
+
+| Role | Repo | Notes |
+|------|------|-------|
+| DFlash2 draft | [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) | 3.85 GB, arch `DFlash2DraftModel`. Mirror: [z-lab/Qwen3.8-27B-DFlash2](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2) |
+| DSpark draft | [RadixArk/Qwen3.8-27B-DSpark](https://huggingface.co/RadixArk/Qwen3.8-27B-DSpark) | 2.72 GB. Fix `architectures` to `Qwen3DSparkModel` in config.json before serving |
+| Target (original) | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) | Official FP8 |
+| Target (AWQ-INT4, used here) | [cyankiwi/Qwen3.8-27B-AWQ-INT4](https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4) | Hybrid GDN, 5 shards |
+| Target (BF16-INT4 variant) | [cyankiwi/Qwen3.8-27B-AWQ-BF16-INT4](https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-BF16-INT4) | linear_attn kept full BF16, 28.8 GB |
+
+Related: [z-lab/dflash](https://github.com/z-lab/dflash) (DFlash repo +
+eval harness), [DFlash2 blog](https://inco.ai/blog/dflash2/).
