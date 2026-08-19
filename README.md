@@ -91,3 +91,14 @@ Details, versions, benches, and upstream issue links:
 
 Related: [z-lab/dflash](https://github.com/z-lab/dflash) (DFlash repo +
 eval harness), [DFlash2 blog](https://inco.ai/blog/dflash2/).
+
+## Reports (rendered HTML)
+
+Raw HTML in `reports/` renders as plain text on GitHub — open them
+via htmlpreview for a rendered view (screenshot-friendly).
+
+| Report | Raw | Rendered |
+|--------|-----|----------|
+| Spec-drafter comparison: DSpark vs DFlash2 vs MTP (AWQ-INT4, 2026-08-19) | [raw](reports/qwen38_int4_spec_drafter_compare_20260819.html) | [htmlpreview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_int4_spec_drafter_compare_20260819.html) |
+| Qwen3.8-27B-FP8 on dual RTX 3090 (2026-08-18) | [raw](reports/qwen38_fp8_forum_post_3090_20260818.html) | [htmlpreview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_fp8_forum_post_3090_20260818.html) |
+| Qwen3.8-27B-FP8 on dual RTX 3080 (2026-08-15) | [raw](reports/qwen38_fp8_forum_post.html) | [htmlpreview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_fp8_forum_post.html) |

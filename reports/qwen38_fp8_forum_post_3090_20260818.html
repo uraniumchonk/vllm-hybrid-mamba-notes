@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Qwen3.8-27B-FP8 on Dual RTX 3090 24GB</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 920px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 28px; color: #222; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #ddd; }
+  td { padding: 7px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 600; }
+  .lose { color: #cf222e; font-weight: 600; }
+  .muted { color: #666; font-size: 13px; }
+  ul { margin: 8px 0 20px; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  pre { background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+
+<h1>Qwen3.8-27B-FP8 on Dual RTX 3090 24GB (vLLM TP2)</h1>
+<p class="muted">2026-08-18. Same machine as the earlier dual-3080 post; GPUs swapped to 3090, P2P enabled, vLLM 0.27.1.</p>
+
+<h2>Hardware</h2>
+<table>
+<tr><th>Component</th><th>Spec</th></tr>
+<tr><td>CPU</td><td>AMD Ryzen 5 5600 (6C/12T)</td></tr>
+<tr><td>RAM</td><td>96GB DDR4-3000</td></tr>
+<tr><td>GPU</td><td>2x RTX 3090 24GB TP2, power locked 250W (2x 3080 20GB idle)</td></tr>
+<tr><td>PCIe</td><td>PEX switch, PXB, NCCL P2P on (NCCL_P2P_DISABLE=0), custom all-reduce</td></tr>
+<tr><td>OS</td><td>Ubuntu 24.04, driver 610.43.02-p2p, vLLM 0.27.1, FlashInfer</td></tr>
+</table>
+
+<h2>Model / serving</h2>
+<table>
+<tr><th>Item</th><th>Detail</th></tr>
+<tr><td>Model</td><td>Qwen/Qwen3.8-27B-FP8 (official FP8 e4m3)</td></tr>
+<tr><td>Architecture</td><td>Qwen3.5-style hybrid, 64 layers (48 linear + 16 full), GQA</td></tr>
+<tr><td>Serving</td><td>max-model-len 64k, FP8 KV, LMCache, mamba-ssm-cache-dtype bfloat16, align</td></tr>
+<tr><td>Native block</td><td>user 800 stays 800; batched 1568; KV 326,697 tokens / 5.37 GiB</td></tr>
+<tr><td>DSpark block</td><td>user 800 resolves to 1600 (k=7); batched 2048; KV 117,186 tokens / 4.05 GiB</td></tr>
+</table>
+
+<h2>Single-stream decode by output type (max_tokens=256)</h2>
+<p class="muted">Same anti-cache prompts as the INT4 MTP diversity run. tok/s is average decode.</p>
+<table>
+<tr><th>Type</th><th>FP8 native + P2P</th><th>FP8 + DSpark, no P2P</th><th>FP8 + DSpark + P2P</th><th>INT4 MTP k=3 + P2P</th></tr>
+<tr><td>numeric</td><td>49.7</td><td class="win">213.9</td><td class="win">206.0</td><td>153.1</td></tr>
+<tr><td>code</td><td>49.4</td><td class="win">161.8</td><td class="win">159.7</td><td>147.5</td></tr>
+<tr><td>prose (zh)</td><td>49.3</td><td class="lose">42.6</td><td class="lose">43.1</td><td class="win">91.7</td></tr>
+<tr><td>mixed</td><td>49.2</td><td>55.0</td><td>54.1</td><td class="win">105.3</td></tr>
+</table>
+
+<h2>n=8 aggregate tok/s</h2>
+<table>
+<tr><th>Type</th><th>FP8 native + P2P</th><th>FP8 + DSpark, no P2P</th><th>FP8 + DSpark + P2P</th><th>INT4 MTP k=3 + P2P</th></tr>
+<tr><td>numeric</td><td>321</td><td>580</td><td>574</td><td class="win">731</td></tr>
+<tr><td>code</td><td>280</td><td>363</td><td>349</td><td class="win">511</td></tr>
+<tr><td>prose (zh)</td><td>291</td><td class="lose">135</td><td class="lose">135</td><td class="win">416</td></tr>
+<tr><td>mixed</td><td>246</td><td class="lose">177</td><td class="lose">175</td><td class="win">472</td></tr>
+</table>
+
+<h2>Speculative acceptance</h2>
+<table>
+<tr><th>Type</th><th>DSpark k=7, no P2P</th><th>DSpark k=7 + P2P</th><th>INT4 MTP k=3 + P2P</th></tr>
+<tr><td>numeric</td><td>91.5%</td><td>90.2%</td><td>99.9%</td></tr>
+<tr><td>code</td><td>61.5%</td><td>59.0%</td><td>89.4%</td></tr>
+<tr><td>prose (zh)</td><td>7.9%</td><td>7.8%</td><td>45.4%</td></tr>
+<tr><td>mixed</td><td>13.4%</td><td>13.6%</td><td>54.0%</td></tr>
+</table>
+
+<h2>vs dual RTX 3080 20GB (same host, 2026-08-15)</h2>
+<table>
+<tr><th>Metric</th><th>2x 3080, no P2P</th><th>2x 3090 + P2P</th><th>Delta</th></tr>
+<tr><td>FP8 native decode</td><td>40.9 tok/s</td><td>49.5 tok/s</td><td class="win">+21%</td></tr>
+<tr><td>FP8 native KV</td><td>~85k tokens</td><td>327k tokens</td><td class="win">3.8x</td></tr>
+<tr><td>INT4 decode (numeric / MTP)</td><td>~58 (no MTP) / ~99 (W8A16 MTP)</td><td>153 (AWQ MTP k=3)</td><td class="win">up</td></tr>
+<tr><td>INT4 prefill</td><td>~1250 tok/s</td><td>1820–1880 tok/s</td><td class="win">+46%</td></tr>
+</table>
+
+<h2>Notes</h2>
+<ul>
+<li>P2P does not move DSpark. Numeric 214 vs 206 is noise. This path is draft-compute bound, not card-to-card.</li>
+<li>DSpark k=7 only pays on predictable output. Chinese prose is slower than turning DSpark off (43 vs 49).</li>
+<li>Everyday chat / mixed Chinese still belongs to INT4 MTP on this box.</li>
+<li>DSpark VRAM is already tight: 23909 / 24576 MiB used, ~215 MiB free. Do not raise gpu_memory_utilization. The draft model is what ate the native 327k KV down to 117k.</li>
+<li>Native FP8 prefill ladder was not re-run on 3090 this session; 3080 prefill numbers stay in the old post.</li>
+</ul>
+
+</body>
+</html>

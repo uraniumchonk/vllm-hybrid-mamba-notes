@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Qwen3.8-27B-FP8 Benchmark</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 28px; color: #222; border-left: 4px solid #e63946; padding-left: 10px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #ddd; }
+  td { padding: 7px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 600; }
+  .lose { color: #cf222e; font-weight: 600; }
+  ul { margin: 8px 0 20px; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  pre { background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+
+<h1>Qwen3.8-27B-FP8 on Dual RTX 3080 20GB (vLLM TP2)</h1>
+
+<h2>Hardware</h2>
+<table>
+<tr><th>Component</th><th>Spec</th></tr>
+<tr><td>CPU</td><td>AMD Ryzen 5 5600 (6C/12T)</td></tr>
+<tr><td>RAM</td><td>96GB DDR4-3000</td></tr>
+<tr><td>GPU</td><td>2x RTX 3080 20GB (TP2)</td></tr>
+<tr><td>PCIe</td><td>PCIe 4.0 x4 per card (bifurcated), no NVLink, NCCL P2P disabled</td></tr>
+<tr><td>OS</td><td>Ubuntu 24.04, vLLM 0.25.1, FlashInfer backend</td></tr>
+</table>
+
+<h2>Model</h2>
+<table>
+<tr><th>Item</th><th>Detail</th></tr>
+<tr><td>Model</td><td>Qwen/Qwen3.8-27B-FP8 (official FP8 e4m3, block 128)</td></tr>
+<tr><td>Size</td><td>~31GB on disk</td></tr>
+<tr><td>Architecture</td><td>Qwen3.5-style hybrid (linear + full attention, 64 layers, GQA)</td></tr>
+<tr><td>Multimodal</td><td>Native vision (image + video)</td></tr>
+<tr><td>Serving</td><td>max-model-len 64k, FP8 KV cache</td></tr>
+</table>
+
+<h2>vLLM Launch Command (reference)</h2>
+<pre><code>vllm serve Qwen/Qwen3.8-27B-FP8 \
+  --tensor-parallel-size 2 \
+  --gpu-memory-utilization 0.92 \
+  --max-model-len 65536 \
+  --kv-cache-dtype fp8 \
+  --mamba-ssm-cache-dtype bfloat16 \
+  --mamba-cache-mode align \
+  --enable-prefix-caching \
+  --enable-chunked-prefill \
+  --attention-backend FLASHINFER \
+  --trust-remote-code</code></pre>
+
+<h2>Prefill (long input / short output)</h2>
+<table>
+<tr><th>Prompt tokens</th><th>Prefill tok/s</th><th>TTFT</th></tr>
+<tr><td>861</td><td>1354</td><td>0.64s</td></tr>
+<tr><td>3,340</td><td>1355</td><td>2.47s</td></tr>
+<tr><td>6,640</td><td>1350</td><td>4.92s</td></tr>
+<tr><td>13,244</td><td>1317</td><td>10.05s</td></tr>
+<tr><td>56,478</td><td>1115</td><td>50.67s</td></tr>
+</table>
+
+<h2>Decode (short input / long output)</h2>
+<table>
+<tr><th>Output tokens</th><th>Decode tok/s</th><th>E2E tok/s</th><th>TTFT</th></tr>
+<tr><td>128</td><td>40.99</td><td>39.74</td><td>0.123s</td></tr>
+<tr><td>256</td><td>40.97</td><td>40.47</td><td>0.102s</td></tr>
+<tr><td>512</td><td>40.96</td><td>40.70</td><td>0.104s</td></tr>
+<tr><td>1024</td><td>40.93</td><td>40.80</td><td>0.105s</td></tr>
+</table>
+
+<h2>Concurrency (128 output tokens each)</h2>
+<table>
+<tr><th>Concurrency</th><th>Aggregate tok/s</th><th>Avg/req</th><th>Mean TTFT</th></tr>
+<tr><td>1</td><td>39.7</td><td>40.9</td><td>0.123s</td></tr>
+<tr><td>2</td><td>72.3</td><td>37.7</td><td>0.160s</td></tr>
+<tr><td>3</td><td>105.1</td><td>36.7</td><td>0.181s</td></tr>
+<tr><td>4</td><td>138.2</td><td>36.5</td><td>0.220s</td></tr>
+<tr><td>5</td><td>163.2</td><td>34.5</td><td>0.233s</td></tr>
+</table>
+
+<h2>vs Qwen3.6-27B AWQ-INT4 (same hardware)</h2>
+<table>
+<tr><th>Metric</th><th>INT4</th><th>FP8</th><th>Delta</th></tr>
+<tr><td>Prefill</td><td>~1250 tok/s</td><td>~1350 tok/s</td><td class="win">+8%</td></tr>
+<tr><td>Decode</td><td>~58 tok/s</td><td>~41 tok/s</td><td class="lose">-29%</td></tr>
+<tr><td>KV cache</td><td>~240k tokens</td><td>~85k tokens</td><td class="lose">-65%</td></tr>
+<tr><td>Precision</td><td>INT4 lossy</td><td>FP8 near-lossless</td><td class="win">FP8 wins</td></tr>
+</table>
+
+<h2>Notes</h2>
+<ul>
+<li>FP8 wins prefill via INT8 tensor cores; loses decode because weights are 2.2x larger (31GB vs 14GB) — decode is bandwidth-bound.</li>
+<li>On 20GB cards: ~15.5GB/card weights leave only ~1.4GB for KV cache (~85k tokens), so 128k context is impossible — dropped to 64k.</li>
+<li>Vision works out of the box (tested with image input).</li>
+<li>Eager to retest on 4x 24GB cards — decode and context should improve massively.</li>
+</ul>
+
+</body>
+</html>

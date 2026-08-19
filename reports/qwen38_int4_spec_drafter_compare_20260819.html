@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Qwen3.8-27B-AWQ-INT4 Spec Decode: DSpark vs DFlash2 vs MTP</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 920px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 28px; color: #222; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #ddd; }
+  td { padding: 7px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 600; }
+  .lose { color: #cf222e; font-weight: 600; }
+  .muted { color: #666; font-size: 13px; }
+  ul { margin: 8px 0 20px; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  pre { background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+
+<h1>Qwen3.8-27B-AWQ-INT4 Speculative Decoding on Dual RTX 3090 24GB</h1>
+<p class="muted">2026-08-19. DSpark (k=7) vs DFlash2 (k=7) vs MTP (k=3) on the same AWQ-INT4 target. vLLM 0.27.1, no LMCache, prefix cache ON, mamba-cache-mode align, block 1600, FP8 KV.</p>
+
+<h2>Hardware</h2>
+<table>
+<tr><th>Component</th><th>Spec</th></tr>
+<tr><td>CPU</td><td>AMD Ryzen 5 5600 (6C/12T)</td></tr>
+<tr><td>RAM</td><td>96GB DDR4-3000</td></tr>
+<tr><td>GPU</td><td>2x RTX 3090 24GB TP2, power locked 250W (2x 3080 20GB idle)</td></tr>
+<tr><td>PCIe</td><td>PEX switch, PXB, NCCL P2P on (NCCL_P2P_DISABLE=0), custom all-reduce</td></tr>
+<tr><td>OS</td><td>Ubuntu 24.04, driver 610.43.02-p2p, vLLM 0.27.1, FlashInfer</td></tr>
+</table>
+
+<h2>Model / serving</h2>
+<table>
+<tr><th>Item</th><th>Detail</th></tr>
+<tr><td>Model</td><td>cyankiwi/Qwen3.8-27B-AWQ-INT4 (compressed-tensors 4-bit, hybrid GDN)</td></tr>
+<tr><td>Architecture</td><td>Qwen3.5-style hybrid, 64 layers (48 linear + 16 full), GQA</td></tr>
+<tr><td>Serving</td><td>vLLM 0.27.1 + DFlash2 patches (#52816+#52883), no LMCache, prefix cache ON, align, FP8 KV, bf16 mamba state</td></tr>
+<tr><td>Block / batched</td><td>block 1600 (spec inflates from 800), max-num-batched-tokens 2048, gpu-mem-util 0.88</td></tr>
+<tr><td>Drafts</td><td>DSpark: RadixArk/Qwen3.8-27B-DSpark (2.72GB, arch fixed to Qwen3DSparkModel). DFlash2: incoai/Qwen3.8-27B-DFlash2 (3.85GB, arch DFlash2DraftModel). MTP: built-in head.</td></tr>
+</table>
+
+<h2>Single-stream decode by output type (max_tokens=256, AGG tok/s)</h2>
+<p class="muted">Same anti-cache prompts across all three drafters. Best per row highlighted.</p>
+<table>
+<tr><th>Type</th><th>MTP k=3</th><th>DSpark k=7</th><th>DFlash2 k=7</th></tr>
+<tr><td>numeric</td><td>148.5</td><td>204.2</td><td class="win">237.0</td></tr>
+<tr><td>code</td><td>126.3</td><td>151.1</td><td class="win">195.3</td></tr>
+<tr><td>prose (zh)</td><td class="win">89.2</td><td class="lose">53.8</td><td>68.9</td></tr>
+<tr><td>mixed</td><td class="win">93.6</td><td class="lose">66.5</td><td>94.5</td></tr>
+</table>
+
+<h2>n=8 aggregate tok/s</h2>
+<table>
+<tr><th>Type</th><th>MTP k=3</th><th>DSpark k=7</th><th>DFlash2 k=7</th></tr>
+<tr><td>numeric</td><td>730.1</td><td>832.4</td><td class="win">980.8</td></tr>
+<tr><td>code</td><td>522.4</td><td>497.2</td><td class="win">618.2</td></tr>
+<tr><td>prose (zh)</td><td class="win">432.6</td><td class="lose">187.4</td><td>257.0</td></tr>
+<tr><td>mixed</td><td class="win">478.2</td><td class="lose">252.4</td><td>374.3</td></tr>
+</table>
+
+<h2>Speculative acceptance</h2>
+<table>
+<tr><th>Type</th><th>MTP k=3</th><th>DSpark k=7</th><th>DFlash2 k=7</th></tr>
+<tr><td>numeric</td><td>99.2%</td><td>89.3%</td><td class="win">97.8%</td></tr>
+<tr><td>code</td><td>87.8%</td><td>62.4%</td><td class="win">83.4%</td></tr>
+<tr><td>prose (zh)</td><td class="win">46.0%</td><td class="lose">7.5%</td><td>13.8%</td></tr>
+<tr><td>mixed</td><td class="win">54.3%</td><td class="lose">14.7%</td><td>24.8%</td></tr>
+</table>
+
+<h2>DFlash2 per-position acceptance (k=7, pos 0..6)</h2>
+<table>
+<tr><th>Type</th><th>pos0</th><th>pos1</th><th>pos2</th><th>pos3</th><th>pos4</th><th>pos5</th><th>pos6</th></tr>
+<tr><td>numeric</td><td>424</td><td>422</td><td>421</td><td>420</td><td>419</td><td>418</td><td>413</td></tr>
+<tr><td>code</td><td>168</td><td>164</td><td>154</td><td>151</td><td>131</td><td>123</td><td>119</td></tr>
+<tr><td>prose (zh)</td><td>556</td><td>245</td><td>122</td><td>69</td><td>52</td><td>49</td><td>36</td></tr>
+<tr><td>mixed</td><td>693</td><td>384</td><td>251</td><td>207</td><td>168</td><td>111</td><td>100</td></tr>
+</table>
+<p class="muted">Numeric acceptance barely decays across all 7 positions (0.98 at pos6) — the DFlash2 block-conv + candidate selector keeps the draft coherent to the end. Prose still decays (same weakness as DSpark, but less severe).</p>
+
+<h2>Prefix-hit path (shared-prefix repro, 2026-08-19)</h2>
+<table>
+<tr><th>Metric</th><th>DFlash2 value</th></tr>
+<tr><td>Hit-path garbage turns</td><td class="win">0 / 8 shared + 0 / 4 control</td></tr>
+<tr><td>Acceptance on hit path (5-turn run)</td><td>0.50 / 0.886 / 0.518 / 0.857 / 0.886 (mean 0.729)</td></tr>
+<tr><td>Prefix cache hit rate</td><td>101,333 queries / 70,400 hits = 69.5%</td></tr>
+<tr><td>Tokens served from cache</td><td>70,400</td></tr>
+</table>
+<p class="muted">The combo that used to poison (spec decode + prefix hit on hybrid GDN) stays clean with DFlash2 + 0.27.1 (#51113 fix) + no LMCache.</p>
+
+<h2>Notes</h2>
+<ul>
+<li>DFlash2 is the fastest drafter on structured output: numeric 237 (single) / 981 (n=8), code 195 / 618 — beats both MTP and DSpark.</li>
+<li>Prose is DFlash2's weak spot (13.8% accept, 68.9 tok/s single) — same failure mode as DSpark but ~2x better. MTP still wins natural language.</li>
+<li>DFlash2's acceptance profile is its killer feature: near-flat per-position decay on numeric (0.98 at pos6) vs DSpark's collapse (0.76/0.45/0.31/0.14/0.10/0.02/0.00).</li>
+<li>Patches required (unmerged upstream): vLLM#52816 (DFlash2 drafter) + #52883 (unquantized LM head guard — required for AWQ-INT4's unquantized head) + #52460 (DSpark MRv2 align fallback).</li>
+<li>LMCache was OFF for this run. DFlash2 + LMCache on 0.27.1 remains blocked by LMCache 0.5.3 SEGV (#4155).</li>
+<li>MTP numbers are from 2026-08-19 (0.25.1, unique-prefix bench); DSpark from 2026-08-18 (0.27.1). Prompts identical across runs.</li>
+</ul>
+
+</body>
+</html>
