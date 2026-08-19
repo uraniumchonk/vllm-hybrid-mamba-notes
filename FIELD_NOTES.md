@@ -1,16 +1,23 @@
 # Hybrid Mamba/GDN + MTP + prefix cache + LMCache
 
 Field notes from a working home-lab serving stack.
-Last updated: 2026-08-19.
+Last updated: 2026-08-19 (DFlash2 update).
 
 This is not an upstream design doc. It is what we measured, what
 broke, and which GitHub issues match. Numbers below are from this
 machine unless marked otherwise.
 
-**One-line rule:** MTP + prefix-cache hit + LMCache on a hybrid
+**One-line rule (old):** MTP + prefix-cache hit + LMCache on a hybrid
 Mamba/GDN model is the perfect storm. It looks fast until a later
 turn or another agent reuses the shared prefix, then output becomes
 garbage while draft acceptance can sit at 100%.
+
+**One-line rule (2026-08-19 update):** DFlash2 (block-diffusion
+drafter) + prefix cache hit on vLLM 0.27.1 **without LMCache** is
+clean on the hit path — first spec-decode combo that survives
+shared-prefix reuse on this hardware. LMCache is still the poison
+amplifier; DFlash2 + LMCache on 0.27.1 remains untested (0.5.3 SEGV
+blocks it).
 
 ---
 
@@ -45,6 +52,30 @@ garbage while draft acceptance can sit at 100%.
 | `--mamba-ssm-cache-dtype` | bfloat16 | Overrides official fp32 so block 800 is legal |
 | `--max-model-len` | 256k | |
 | `--max-num-seqs` | 16 | |
+
+### Stack that stays up with spec decode (new, 2026-08-19)
+
+| Component | Version | Notes |
+|-----------|---------|--------|
+| vLLM | **0.27.1** + patches | Patched with DFlash2 (#52816+#52883) and DSpark MRv2 fallback (#52460); contains MTP prefix-cache fix #51113 |
+| LMCache | **off** | Not used in this combo |
+| torch | 2.13.0+cu130 | |
+| flashinfer | 0.6.16.post3 + jit-cache | |
+| Spec decode | **DFlash2** (method=dflash, 7 tokens) | Draft: `incoai/Qwen3.8-27B-DFlash2` (arch `DFlash2DraftModel`, 3.85 GB) |
+| Prefix cache | on | `--enable-prefix-caching` |
+| `mamba-cache-mode` | `align` | |
+| `--block-size` | 1600 | Spec decode inflates mamba page from 800 to 1600 |
+| `--max-num-batched-tokens` | 2048 | Satisfies `1600 ≤ x < 3200` |
+| `--kv-cache-dtype` | fp8 | |
+| `--mamba-ssm-cache-dtype` | bfloat16 | |
+| `--gpu-memory-utilization` | 0.88 | DSpark/DFlash2 draft eats extra VRAM; 0.94 OOMs (marlin workspace) |
+
+Also works in the same stack: MTP (method=mtp, 3 tokens, built-in
+head) and DSpark (method=dspark, 7 tokens, `draft_sample_method:
+probabilistic`, draft at `RadixArk/Qwen3.8-27B-DSpark` with
+architectures fixed to `Qwen3DSparkModel`). MTP/DSpark hit-path
+synthetic bench was clean too, but DFlash2 is the one with
+acceptance + per-position numbers we trust.
 
 ### Stack that does **not** stay up (tried 2026-08-18)
 
@@ -108,20 +139,23 @@ size. We keep chunk 1600 (`1600 % 800 == 0`, also fine for 1600).
 
 Read rows as "can we leave this combination running for real traffic".
 
-| vLLM | LMCache | Prefix cache | MTP | Result |
+| vLLM | LMCache | Prefix cache | Spec | Result |
 |------|---------|--------------|-----|--------|
-| 0.25.1 | 0.5.1 | on | **off** | **Stable.** Current production. |
-| 0.25.1 | 0.5.1 | on | **on** | Starts. Type-bench looks great. Later prefix-hit turns can emit garbage with **100% draft accept**. |
-| 0.25.1 | off | on | on | Still the EAGLE-on-Mamba scheduler bug. Safer than LMCache (no unaligned external tokens) but not clean. |
-| 0.25.1 | 0.5.1 | **off** | on | MTP can work. You give up prefix TTFT. |
+| **0.25.1** | **0.5.1** | on | **off** | **Stable.** Current production. |
+| **0.27.1** | **off** | on | **DFlash2** | **Stable on the hit path (2026-08-19).** First spec-decode combo that survives shared-prefix reuse. |
+| **0.27.1** | **off** | on | MTP / DSpark | Synthetic hit-path bench clean; acceptance numbers not captured for these two (script bug). Use align mode for DSpark. |
+| 0.25.1 | 0.5.1 | on | MTP on | Starts. Type-bench looks great. Later prefix-hit turns can emit garbage with **100% draft accept**. |
+| 0.25.1 | off | on | MTP on | Still the EAGLE-on-Mamba scheduler bug. Safer than LMCache (no unaligned external tokens) but not clean. |
+| 0.25.1 | 0.5.1 | **off** | MTP on | MTP can work. You give up prefix TTFT. |
 | 0.25.1 | 0.5.3 | — | — | Pointless: 0.5.3 is for the new mamba page format. |
 | 0.27.1 | 0.5.1 / 0.5.2 | on | any | **Hard fail at register_kv_caches.** Adapter still expects `[conv_state, ssm_state]`; 0.27.1 registers one padded tensor. |
 | 0.27.1 | 0.5.3 | on | off | Starts. Then `cudaMemcpy error 1` storms and a **SEGV** of the LMCache process. |
-| 0.27.1 | 0.5.3 | on | on | MTP poisoning is *fixed* upstream (#51113 / #47861 landed). You still eat the 0.5.3 SEGV and DSpark/MRv2 issues. |
+| 0.27.1 | 0.5.3 | on | MTP on | MTP poisoning is *fixed* upstream (#51113 / #47861 landed). You still eat the 0.5.3 SEGV and DSpark/MRv2 issues. |
 | 0.26.x | 0.5.2 / 0.5.3.dev | on | any | Silent multilingual salad on shared-prefix hits for hybrid + FlashInfer. [LMCache#4247](https://github.com/LMCache/LMCache/issues/4247). |
 
-There is no currently-shipping trio of "new vLLM + new LMCache + MTP"
-that is safe on this hardware.
+There is no currently-shipping trio of "new vLLM + new LMCache + spec
+decode" that is safe on this hardware. The no-LMCache DFlash2 combo
+is the closest to good (2026-08-19).
 
 ---
 
@@ -294,11 +328,40 @@ Without MTP, decode on this box sits around 65 tok/s class for
 general traffic. MTP's 95–156 tok/s is real. We still pulled it,
 because agent prefix-hits are the default workload here.
 
+## 7b. Numbers (2026-08-19, 0.27.1, INT4, TP2 3090, DFlash2, no LMCache)
+
+DFlash2 drafter (7 draft tokens) on the same AWQ-INT4 target, prefix
+cache ON, align mode, block 1600. Two runs: full prefix-hit repro
+(8 shared-prefix turns + 4 unique-prefix control) and a 5-turn
+acceptance-only run.
+
+| Metric | Value |
+|--------|-------|
+| Hit-path garbage turns | 0 / 8 shared + 0 / 4 control |
+| Acceptance (5-turn run) | 0.50 / 0.886 / 0.518 / 0.857 / 0.886, mean **0.729** |
+| Overall (full run, cumulative counters) | accepted 349 / drafted 644 = **54.2%** |
+| Per-position acceptance (pos 0..6) | 0.75 / 0.63 / 0.58 / 0.55 / 0.49 / 0.43 / 0.36 |
+| Prefix cache hit rate | 101,333 queries / 70,400 hits = **69.5%** |
+| Prefix tokens served from cache | 70,400 |
+
+Per-position tail (0.36 at pos 6) is the DFlash2 signature: smooth
+decay vs DSpark's collapse (0.76/0.45/0.31/0.14/0.10/0.02/0.00) and
+matches z-lab's published tables. Output on the shared-prefix hit
+path stayed in the requested [Q][A][C] format on every turn — no
+salad, no tool-call leak, no loops.
+
+Caveat: MTP and DSpark got the same clean garbage verdict in the
+full repro, but their acceptance counters were lost to a metrics
+parse bug in the harness; only DFlash2 has numbers. Agent-turn
+validation with real traffic was ongoing at the time of writing.
+
 ---
 
 ## 8. What we recommend
 
 **Run today**
+
+No-spec production (stable since 2026-08-13):
 
 ```
 vLLM 0.25.1
@@ -313,6 +376,22 @@ max-num-batched-tokens 1536
 LMCache chunk-size 1600
 ```
 
+Spec-decode path (new, 2026-08-19 — DFlash2 + prefix hit is clean):
+
+```
+vLLM 0.27.1 + DFlash2 patches (#52816+#52883) + #52460
+LMCache OFF
+prefix cache ON
+speculative-config '{"method":"dflash",
+  "model":"<DFlash2 draft path>","num_speculative_tokens":7}'
+mamba-cache-mode=align
+block-size 1600
+max-num-batched-tokens 2048
+kv-cache-dtype fp8
+mamba-ssm-cache-dtype bfloat16
+gpu-memory-utilization 0.88
+```
+
 Clear `~/.cache/vllm/modelinfos/`, torch compile cache, and Triton
 cache after any vLLM upgrade.
 
@@ -321,8 +400,11 @@ cache after any vLLM upgrade.
 Pick one:
 
 - MTP **or** prefix cache / LMCache, not both.
+- On 0.27.1 without LMCache, MTP + prefix hit is clean in synthetic
+  bench (still validating with real agent turns).
 - Wait for vLLM ≥ 0.27.1 **and** an LMCache tag that has closed
-  #4155 **and** a green week on your own hybrid model.
+  #4155 **and** a green week on your own hybrid model before adding
+  LMCache back.
 
 **If you already poisoned a process**
 
@@ -349,9 +431,17 @@ vLLM:
 - [vLLM#43559](https://github.com/vllm-project/vllm/issues/43559) — accuracy drop with prefix cache + MTP on Qwen3.6
 - [vLLM#47087](https://github.com/vllm-project/vllm/issues/47087) — MTP garbage loops on deep agent chats
 - [vLLM#47194](https://github.com/vllm-project/vllm/issues/47194) — tool-call leakage + recall fail, hybrid + MTP3
-- [vLLM#47861](https://github.com/vllm-project/vllm/pull/47861) — MTP prefix-cache correctness for hybrid Mamba
-- [vLLM#51113](https://github.com/vllm-project/vllm/pull/51113) — keep align prefill chunks block-aligned past `last_cache_position`
-- [vLLM#52317](https://github.com/vllm-project/vllm/issues/52317) — DSpark + `mamba_cache_mode=all` MRv2 crash
+- [vLLM#47861](https://github.com/vllm-project/vllm/pull/47861) — MTP prefix-cache correctness for hybrid Mamba (closed unmerged; scheduler half landed via #51113)
+- [vLLM#51113](https://github.com/vllm-project/vllm/pull/51113) — keep align prefill chunks block-aligned past `last_cache_position` (in 0.27.0+)
+- [vLLM#52317](https://github.com/vllm-project/vllm/issues/52317) — DSpark + `mamba_cache_mode=all` MRv2 crash (workaround: align mode)
+- [vLLM#52460](https://github.com/vllm-project/vllm/pull/52460) — MRv2 `all`→`align` fallback (unmerged; we hand-patched it)
+- [vLLM#52816](https://github.com/vllm-project/vllm/pull/52816) — DFlash2 drafter (unmerged; we hand-patched it)
+- [vLLM#52883](https://github.com/vllm-project/vllm/pull/52883) — DFlash2 unquantized LM head guard (unmerged, stacked on #52816; required for compressed-tensors targets with unquantized head)
+
+DFlash2 model + notes:
+
+- [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) — DFlash 2 draft model (mirror: z-lab)
+- [z-lab/dflash](https://github.com/z-lab/dflash) — DFlash repo, eval harness, acceptance tables
 
 LMCache:
 
