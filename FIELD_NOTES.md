@@ -1,7 +1,7 @@
 # Hybrid Mamba/GDN + MTP + prefix cache + LMCache
 
 Field notes from a working home-lab serving stack.
-Last updated: 2026-08-19 (DFlash2 update).
+Last updated: 2026-08-21 (LMCache 0.5.4rc5 + #4253 split).
 
 This is not an upstream design doc. It is what we measured, what
 broke, and which GitHub issues match. Numbers below are from this
@@ -12,12 +12,15 @@ Mamba/GDN model is the perfect storm. It looks fast until a later
 turn or another agent reuses the shared prefix, then output becomes
 garbage while draft acceptance can sit at 100%.
 
-**One-line rule (2026-08-19 update):** DFlash2 (block-diffusion
-drafter) + prefix cache hit on vLLM 0.27.1 **without LMCache** is
-clean on the hit path — first spec-decode combo that survives
-shared-prefix reuse on this hardware. LMCache is still the poison
-amplifier; DFlash2 + LMCache on 0.27.1 remains untested (0.5.3 SEGV
-blocks it).
+**One-line rule (2026-08-19):** DFlash2 + GPU prefix-cache hit on
+vLLM 0.27.1 **without LMCache** is clean. Still the daily path.
+
+**One-line rule (2026-08-21):** LMCache 0.5.4rc5 no longer SEGVs.
+Stock 0.5.4rc5 + FlashInfer + block 1600 still **full-salads** on
+hit (`subpaged-attention-view` never fires). A local #4253-shaped
+patch kills that salad. **A second bug remains:** long multi-session
+switch occasionally near-degrades (not full salad). Daily stays
+DFlash2 without LMCache.
 
 ---
 
@@ -90,6 +93,19 @@ vLLM 0.27.1 + LMCache 0.5.3 also had a separate FlashInfer / JIT
 regression on this box (we rolled the whole stack back). That is
 orthogonal to the hybrid-cache bugs below.
 
+### Stack tried 2026-08-21 (LMCache 0.5.4rc5)
+
+| Component | Version | Result |
+|-----------|---------|--------|
+| vLLM | 0.27.1 + DFlash2 patches | Starts |
+| LMCache | **0.5.4rc5** stock | No SEGV. FlashInfer + block 1600 **full-salads** on hit. Startup: `{'mamba-unified-view': 48}` only. Draft accept 15% → **0%** on hit; target text is garbage (not bad drafts getting accepted). |
+| LMCache | 0.5.4rc5 + local #4253-shaped `kv_cache_group_edits.py` | Salad gone on single-prefix round-trip. Fingerprint: `{'mamba-unified-view': 48, 'subpaged-attention-view': 21}` (21 = 16 attn + DFlash draft). Same prompt twice: 1389ms / 567ms, both coherent. |
+| Same patched combo | long multi-session switch | **Near-degrades** (sticky reasoning, not full salad). Second bug: MP retrieve / hybrid group alignment. Not daily. |
+
+#4253 upstream: still open, zero human reviews, last activity 2026-08-17.
+ApostaC could not repro on H200 FlashAttention (no 1600→64 split).
+Do not hold #4253 for the leftover retrieve bug.
+
 ---
 
 ## 2. Feature cheat sheet
@@ -97,7 +113,7 @@ orthogonal to the hybrid-cache bugs below.
 | Knob | What it does | Safe with hybrid GDN? |
 |------|----------------|------------------------|
 | Prefix cache | Hash token blocks, reuse KV | Yes, on 0.25.1 + align mode, **without MTP** |
-| LMCache | Offload those blocks to RAM/disk, restore later | Yes on **0.25.1 + 0.5.1**. Not on 0.27.1 + 0.5.1/0.5.2. 0.5.3 dies. |
+| LMCache | Offload those blocks to RAM/disk, restore later | Yes on **0.25.1 + 0.5.1**. 0.27.1 needs ≥ 0.5.3 to start; 0.5.3 SEGVs; 0.5.4rc5 lives but FlashInfer+1600 salads until #4253-shaped edit; long-session retrieve still near-degrades. |
 | MTP / EAGLE-style spec decode | Draft N tokens from a colocated MTP head, verify | Fast when cold / unique prompt. **Unsafe** with prefix hit + LMCache |
 | `mamba-cache-mode=align` | Snapshot recurrent state only at block boundaries | Required for GDN + prefix cache / LMCache |
 | `mamba-cache-mode=all` | Snapshot every `i * block_size` | Not the LMCache-validated combo; DSpark+MRv2 also crashes here |
@@ -151,11 +167,13 @@ Read rows as "can we leave this combination running for real traffic".
 | 0.27.1 | 0.5.1 / 0.5.2 | on | any | **Hard fail at register_kv_caches.** Adapter still expects `[conv_state, ssm_state]`; 0.27.1 registers one padded tensor. |
 | 0.27.1 | 0.5.3 | on | off | Starts. Then `cudaMemcpy error 1` storms and a **SEGV** of the LMCache process. |
 | 0.27.1 | 0.5.3 | on | MTP on | MTP poisoning is *fixed* upstream (#51113 / #47861 landed). You still eat the 0.5.3 SEGV and DSpark/MRv2 issues. |
+| 0.27.1 | **0.5.4rc5 stock** | on | DFlash2 | Starts. No SEGV. **Full salad** on LMCache hit (FlashInfer 1600 paged as 64; `subpaged-attention-view` absent). |
+| 0.27.1 | **0.5.4rc5 + #4253-shaped patch** | on | DFlash2 | Single-prefix hit clean. Long multi-session switch still near-degrades. **Not daily.** |
 | 0.26.x | 0.5.2 / 0.5.3.dev | on | any | Silent multilingual salad on shared-prefix hits for hybrid + FlashInfer. [LMCache#4247](https://github.com/LMCache/LMCache/issues/4247). |
 
-There is no currently-shipping trio of "new vLLM + new LMCache + spec
-decode" that is safe on this hardware. The no-LMCache DFlash2 combo
-is the closest to good (2026-08-19).
+Daily remains DFlash2 **without** LMCache. 0.5.4rc5 + local #4253 is
+the closest “new vLLM + new LMCache + spec” has gotten; leftover is
+retrieve-depth, not the SEGV and not the 1600/64 layout.
 
 ---
 
@@ -168,7 +186,7 @@ Match what you see, then jump.
 | Engine exits at startup: `expected a Mamba [conv_state, ssm_state] tensor list, got Tensor` | 0.27.1 + LMCache ≤ 0.5.2 | Old adapter vs fused mamba page | Pair 0.27.1 only with ≥ 0.5.3, **or** stay on 0.25.1 + 0.5.1 |
 | Engine exits: `block_size (1600) must be <= max_num_batched_tokens` | MTP just enabled | MTP inflates mamba page; block jumped | Raise `--max-num-batched-tokens` to `< 2 * new_block` (e.g. 2048) |
 | Engine exits: `max_num_batched_tokens` vs `2 * block_size` ValueError | LMCache + hybrid | Align-mode snapshot invariant | Set `block ≤ batched < 2*block` |
-| `cudaMemcpy failed with error code 1` in `lmcache_memcpy_async_d2h`, then **SEGV** of the LMCache daemon | 0.5.3 + hybrid + `kv_both` + engine-driven transfer | Staging pointer treated as the wrong device / invalid async D2H range. Partial-chunk path is lethal. | Roll back to 0.5.1 + 0.25.1. Do not "tune L1" as the fix. |
+| `cudaMemcpy failed with error code 1` in `lmcache_memcpy_async_d2h`, then **SEGV** of the LMCache daemon | 0.5.3 + hybrid + `kv_both` + engine-driven transfer | Staging pointer treated as the wrong device / invalid async D2H range. Partial-chunk path is lethal. | 0.5.4rc5 stops the SEGV. Do not "tune L1" as the fix. |
 | Same `cudaMemcpy error 1` bursts under high concurrency, service stays up | 0.5.1 | Async D2H vs block reuse race | Usually drop-that-chunk only. Watch, don't panic. |
 | First turn fine, second turn / other agent is token salad, `<\|tool_call\|>` leak, or a single-digit loop | MTP + prefix hit | Recurrent state snapshot does not match the hash (EAGLE peek-and-drop applied to Mamba) | Disable MTP **or** disable prefix cache/LMCache |
 | Draft acceptance **→ 0%**, output garbage | MTP + prefix hit, older write-up | Draft and target disagree after a poisoned restore | Same as above |
@@ -177,6 +195,9 @@ Match what you see, then jump.
 | Thinking eats `max_tokens`, content empty | MTP + long agent turn | Same poisoning, or reasoning loop | Disable MTP for agent workloads |
 | TTFT did not improve after a vLLM upgrade | Any | Stale `~/.cache/vllm/modelinfos/` | Delete modelinfos + torch_compile + triton caches |
 | OOM killer loops on the LMCache process | L1 54 GB + another fat GPU job | RAM accounting, not a KV bug | Shrink `--l1-size-gb` or don't co-locate |
+| Full multilingual salad on 2nd request; draft accept → 0%; no exception | 0.27.1 + stock 0.5.4rc5 + FlashInfer + block 1600 | `_SubpagedAttentionViewEdit` still requires `ndim == 5`; rank-4 fused KV never matches. Attention stays paged at 64. | Local #4253-shaped edit. Startup must show `subpaged-attention-view`. |
+| `KV cache group edits applied: {'mamba-unified-view': 48}` only | Same | Attention edit did not fire | Same |
+| Single-prefix hit OK; long session switch is sticky / near-garbage | 0.5.4rc5 + #4253-shaped patch | Second bug: MP retrieve / hybrid group alignment (last chunk / ext>0) | Daily: LMCache off. Do not patch `kv_cache_group_edits.py` further. |
 
 Two faces of the same MTP bug:
 
@@ -376,7 +397,7 @@ max-num-batched-tokens 1536
 LMCache chunk-size 1600
 ```
 
-Spec-decode path (new, 2026-08-19 — DFlash2 + prefix hit is clean):
+Spec-decode path (daily, 2026-08-19 — DFlash2 + GPU prefix hit is clean):
 
 ```
 vLLM 0.27.1 + DFlash2 patches (#52816+#52883) + #52460
@@ -392,6 +413,17 @@ mamba-ssm-cache-dtype bfloat16
 gpu-memory-utilization 0.88
 ```
 
+Native vLLM KV offload is fine. LMCache is not required for this path.
+
+**If you want LMCache on 0.27.1 anyway**
+
+- 0.5.4rc5: lives (no SEGV). Stock still salads on FlashInfer+1600.
+- Hand-apply #4253-shaped `kv_cache_group_edits.py` (accept rank-4 fused
+  KV; fail loud if attention is still kernel-paged). Confirm
+  `subpaged-attention-view` in the startup log.
+- Expect leftover near-degradation on long multi-session switch.
+  That is a second bug. Do not stack more edits on that file.
+
 Clear `~/.cache/vllm/modelinfos/`, torch compile cache, and Triton
 cache after any vLLM upgrade.
 
@@ -402,9 +434,9 @@ Pick one:
 - MTP **or** prefix cache / LMCache, not both.
 - On 0.27.1 without LMCache, MTP + prefix hit is clean in synthetic
   bench (still validating with real agent turns).
-- Wait for vLLM ≥ 0.27.1 **and** an LMCache tag that has closed
-  #4155 **and** a green week on your own hybrid model before adding
-  LMCache back.
+- Wait for vLLM ≥ 0.27.1 **and** LMCache ≥ 0.5.4 **and** #4253 merged
+  **and** a green week on hybrid retrieve-depth before adding LMCache
+  back for agent sessions.
 
 **If you already poisoned a process**
 
@@ -416,7 +448,8 @@ same trash.
 
 - Jump 0.25.1 → 0.27.1 just to "get the MTP fix" while staying on
   LMCache 0.5.1 (it will not start).
-- Jump LMCache 0.5.1 → 0.5.3 without a SEGV plan.
+- Jump LMCache 0.5.1 → 0.5.3 without a SEGV plan. 0.5.4rc5 is the
+  SEGV fix; it is not the salad fix.
 - Treat a green type-bench as proof MTP is safe for agents.
 - Expect fp32 mamba / bf16 KV to fix hash-level poisoning.
 - Leave `--prefix-match-unit` on 0.27.x + LMCache without a
@@ -446,9 +479,10 @@ DFlash2 model + notes:
 LMCache:
 
 - [LMCache#4155](https://github.com/LMCache/LMCache/issues/4155) — server SIGSEGV on partial-chunk transfer
-- [LMCache#4247](https://github.com/LMCache/LMCache/issues/4247) — silent hybrid corruption on 0.26 shared-prefix hits
+- [LMCache#4247](https://github.com/LMCache/LMCache/issues/4247) — silent hybrid corruption on shared-prefix hits. Two bugs in one thread: (1) missing rank-4 subpaged edit, (2) leftover retrieve-depth / multi-session near-degrade. We posted both on this issue.
+- [LMCache#4253](https://github.com/LMCache/LMCache/pull/4253) — fused KV layout group-edit fix. **Open, zero reviews, last ping 2026-08-17.** Necessary for FlashInfer 1600→64. Not sufficient for long-session retrieve.
 - [LMCache#4288](https://github.com/LMCache/LMCache/pull/4288) — validate async memcpy host ranges
-- [LMCache#4253](https://github.com/LMCache/LMCache/pull/4253) — fused KV layout group-edit fix
+- [LMCache#4600](https://github.com/LMCache/LMCache/pull/4600) — mark failed MP retrieves as load errors (fail closed; still open)
 
 ---
 
