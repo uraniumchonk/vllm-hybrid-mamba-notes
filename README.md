@@ -5,74 +5,68 @@ combinations that explode. Reasons live in
 [FIELD_NOTES.md](FIELD_NOTES.md).
 
 Measured on Qwen3.8-27B-AWQ-INT4 (hybrid GDN), 2× RTX 3090 TP2,
-FlashInfer, last updated 2026-08-21.
+FlashInfer, last updated 2026-08-28.
 
-## Closest-to-good (2026-08-21)
+## Closest-to-good (2026-08-28)
 
-### Fast path with spec decode (recommended)
+### Fast path: 0.28.0 + DFlash2 + LMCache (recommended)
+
+```
+vLLM 0.28.0
+  + port of #54165 (DFlash is not EAGLE for mamba last-block)
+  + port of #50885 (FlashInfer native FULL decode CUDA graphs)
+LMCache 0.5.4rc5 ON (LMCacheMPConnector, kv_both)
+prefix cache ON
+spec = DFlash2-W4A16-GPTQ, method=dflash, K=7
+mamba-cache-mode=align
+block-size 1600 / chunk-size 1600 / max-num-batched-tokens 2048
+gpu-memory-utilization 0.84 (FULL graphs OOM at 0.88 here)
+```
+
+Stock 0.28.0 is **not** enough. Without #54165, LMCache retrieve
+is 100% byte salad (vLLM#53505) — this is the 8/21 “second bug”.
+Without #50885, FlashInfer+spec silently drops `FULL_AND_PIECEWISE`
+→ `PIECEWISE` and code/mixed decode falls ~35–50% vs 0.27.1.
+
+With both ports: MeowChat 360/360 clean; typev2 n=1 matches 0.27.1
+(code 268 vs 246 tok/s, mixed 97 vs 91, realjob 165 vs 162).
+
+#52816 / #52883 are **in** 0.28.0. Still need `_dense_kv_rows()`
+for packed W4/W8 drafts.
+
+### Older: 0.27.1 DFlash2, LMCache off
 
 ```
 vLLM 0.27.1 (+ DFlash2 patches)
 LMCache OFF
 prefix cache ON
 native KV offload OK (not LMCache)
-spec decode = DFlash2 draft (method=dflash, 7 tokens)
-mamba-cache-mode=align
-block-size 1600
-max-num-batched-tokens 2048
+spec = DFlash2, K=7
+block-size 1600 / max-num-batched-tokens 2048
 ```
 
-**DFlash2 + vLLM GPU prefix-cache hit + no LMCache is clean.**
-Shared-prefix hits keep sane output. This is still the daily path.
+Clean GPU-prefix hit. Use if you cannot port #54165/#50885.
 
-Patches on top of stock 0.27.1 (all unmerged upstream, applied by
-hand to site-packages):
+0.27.1 + LMCache 0.5.4rc5 + local #4253 stopped SEGV and the
+1600→64 layout salad, but long multi-session switch still
+near-degraded. That leftover **is** #53505 / missing #54165.
 
-- vLLM#52816 + #52883 — DFlash2 drafter (block conv + candidate
-  selector) and its unquantized-LM-head guard fix
-- vLLM#52460 — DSpark/MRv2 mamba `all`→`align` fallback
-
-### LMCache 0.5.4rc5 + local #4253 (experimental, not daily)
+### Older: no-spec
 
 ```
-vLLM 0.27.1 (+ DFlash2 patches)
-LMCache 0.5.4rc5 + local kv_cache_group_edits.py patch
-prefix cache ON
-spec decode = DFlash2
-block-size 1600 / chunk-size 1600
-FlashInfer
-```
-
-0.5.4rc5 **stops the 0.5.3 SEGV**. A local equivalent of
-[LMCache#4253](https://github.com/LMCache/LMCache/pull/4253) stops
-the **full multilingual salad** on a single shared-prefix round-trip
-(startup fingerprint `mamba-unified-view: 48, subpaged-attention-view: 21`).
-
-**Not daily:** switching between several long agent sessions still
-occasionally hits a bad chunk — not full salad, but close
-(sticky reasoning / near-garbage). That leftover is a **second
-bug** (LMCache MP retrieve / hybrid group alignment). Do not fold
-it back into #4253. #4253 itself is still unmerged (zero reviews).
-
-### Stable no-spec path
-
-```
-vLLM 0.25.1
-LMCache 0.5.1
-prefix cache ON
-MTP OFF
-mamba-cache-mode=align
-block-size 800
-max-num-batched-tokens 1536
+vLLM 0.25.1 + LMCache 0.5.1, MTP OFF, block 800 / batched 1536
 ```
 
 ## Lookup
 
 | vLLM | LMCache | Prefix | Spec | What happens |
 |------|---------|--------|------|----------------|
-| **0.27.1** | **off** | on | **DFlash2** | **Use this for spec decode.** Clean GPU-prefix hit path. |
-| **0.25.1** | **0.5.1** | on | **off** | **Use this for no-spec + LMCache.** Stable. |
-| 0.27.1 | **0.5.4rc5 + #4253-shaped patch** | on | DFlash2 | Starts. No SEGV. Single-prefix round-trip no longer salads. **Long multi-session switch still near-degrades.** Experimental. |
+| **0.28.0 + #54165 + #50885** | **0.5.4rc5** | on | **DFlash2 K=7** | **Use this.** Retrieve-ON + agent soak clean; typev2 ≈ 0.27.1. |
+| 0.28.0 stock | 0.5.4 / 0.5.5 | on | DFlash2 | **#53505.** Retrieve hit = instant U+FFFD salad. Native offload store = 0. |
+| 0.28.0 stock | off | on | DFlash2 | Not salad; FlashInfer spec → PIECEWISE; code/mixed −35–50%. |
+| **0.27.1** | **off** | on | **DFlash2** | Previous daily spec path. Clean GPU-prefix hit. |
+| **0.25.1** | **0.5.1** | on | **off** | Previous no-spec + LMCache. Stable. |
+| 0.27.1 | **0.5.4rc5 + #4253-shaped patch** | on | DFlash2 | No SEGV. Layout salad gone. **Long multi-session still near-degrades** (#53505). |
 | 0.27.1 | 0.5.4rc5 stock | on | DFlash2 | Starts. Full salad on LMCache hit (missing `subpaged-attention-view`; FlashInfer 1600→64). |
 | 0.25.1 | 0.5.1 | on | MTP on | Starts. Type-bench looks fast. Prefix-hit agent turns can emit zeros / salad at 100% accept. |
 | 0.25.1 | off | on | MTP on | Still the EAGLE-on-Mamba scheduler bug. Safer than LMCache, not clean. |
@@ -83,9 +77,8 @@ max-num-batched-tokens 1536
 | 0.27.1 | off | on | MTP / DSpark | Starts, hit path looks clean in synthetic bench. |
 | 0.26.x | 0.5.2 / 0.5.3.dev | on | any | Silent multilingual salad on shared-prefix hits (FlashInfer hybrid). |
 
-Daily: DFlash2 **without** LMCache. 0.5.4rc5 + local #4253 is the
-closest “new vLLM + new LMCache + spec” has gotten; the remaining
-pit is retrieve-depth, not the SEGV and not the 1600/64 layout.
+Daily: 0.28.0 + #54165 + #50885 + LMCache 0.5.4rc5. Stock 0.28.0
+is not that. 0.27.1 without LMCache remains the no-port fallback.
 
 ## Symptoms → which row
 
@@ -97,7 +90,9 @@ pit is retrieve-depth, not the SEGV and not the 1600/64 layout.
 | `cudaMemcpy` then SEGV of the cache daemon | 0.27.1 + LMCache 0.5.3 |
 | Full multilingual salad on 2nd request, accept → 0% | 0.27.1 + stock 0.5.4rc5, missing `subpaged-attention-view` |
 | `KV cache group edits applied: {'mamba-unified-view': 48}` only | Same. Need `subpaged-attention-view` too. |
-| Single-prefix hit OK; long session switch is sticky / near-garbage | 0.5.4rc5 + #4253-shaped patch. Second bug. |
+| Single-prefix hit OK; long session switch is sticky / near-garbage | 0.5.4rc5 + #4253 without #54165. This is #53505. |
+| Retrieve hit → U+FFFD / mixed-script salad | 0.28.0 DFlash + LMCache without #54165 |
+| `FULL_AND_PIECEWISE` … `UNIFORM_SINGLE_TOKEN_DECODE` → PIECEWISE | FlashInfer+spec on sm_86; missing #50885 |
 | Unique short prompts at 150 tok/s | Spec decode working. Does **not** prove the hit path is safe. |
 
 Details, versions, benches, and upstream issue links:
@@ -108,6 +103,7 @@ Details, versions, benches, and upstream issue links:
 | Role | Repo | Notes |
 |------|------|-------|
 | DFlash2 draft | [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) | 3.85 GB, arch `DFlash2DraftModel`. Mirror: [z-lab/Qwen3.8-27B-DFlash2](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2) |
+| DFlash2 draft (W4A16 GPTQ) | local `Qwen3.8-27B-DFlash2-W4A16-GPTQ` | Packed quant; needs `_dense_kv_rows()` on 0.28.0 |
 | DSpark draft | [RadixArk/Qwen3.8-27B-DSpark](https://huggingface.co/RadixArk/Qwen3.8-27B-DSpark) | 2.72 GB. Fix `architectures` to `Qwen3DSparkModel` in config.json before serving |
 | Target (original) | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) | Official FP8 |
 | Target (AWQ-INT4, used here) | [cyankiwi/Qwen3.8-27B-AWQ-INT4](https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4) | Hybrid GDN, 5 shards |
