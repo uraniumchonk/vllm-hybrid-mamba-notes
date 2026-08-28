@@ -18,7 +18,7 @@ prefix cache ON
 spec = DFlash2-W4A16-GPTQ  method=dflash  K=7
 mamba-cache-mode=align
 block-size 1600 / chunk-size 1600 / max-num-batched-tokens 2048
-gpu-memory-utilization 0.84
+gpu-memory-utilization 0.94
 ```
 
 n=1 decode tok/s, same INT4 target, 2×3090. No-DFlash from 2026-08-23
