@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>vLLM 0.28.0 + DFlash2 + LMCache — the good stack (2026-08-28)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 920px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 28px; color: #222; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #ddd; }
+  td { padding: 7px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 600; }
+  .lose { color: #cf222e; font-weight: 600; }
+  .muted { color: #666; font-size: 13px; }
+  ul { margin: 8px 0 20px; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  pre { background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+
+<h1>The good stack: vLLM 0.28.0 + DFlash2 + LMCache</h1>
+<p class="muted">2026-08-28. Qwen3.8-27B-AWQ-INT4 hybrid GDN, DFlash2-W4A16-GPTQ K=7, 2× RTX 3090 TP2. Local ports of vLLM#54165 and #50885 on stock 0.28.0. LMCache 0.5.4rc5 retrieve-ON.</p>
+
+<h2>Headline numbers</h2>
+<table>
+<tr><th>What</th><th>Before (stock 0.28 / PIECEWISE)</th><th>Now (#54165 + #50885)</th></tr>
+<tr><td>LMCache retrieve-ON (2226 tok)</td><td class="lose">100% U+FFFD salad</td><td class="win">CLEAN</td></tr>
+<tr><td>MeowChat 3-session soak</td><td class="lose">FFFD on round-1 chatting</td><td class="win">360 / 360 clean</td></tr>
+<tr><td>typev2 code n=1 decode</td><td class="lose">129 tok/s (ITL 44 ms)</td><td class="win">268 tok/s (ITL 27.5 ms)</td></tr>
+<tr><td>typev2 mixed n=1 decode</td><td class="lose">59 tok/s</td><td class="win">97 tok/s</td></tr>
+<tr><td>typev2 realjob n=1 decode</td><td>—</td><td class="win">165 tok/s (0.27.1 was 162)</td></tr>
+<tr><td>Native offload GPU→CPU store</td><td class="lose">0 bytes</td><td class="win">~221 MiB / 2226-tok prompt</td></tr>
+</table>
+<p class="muted">0.27.1 W4A16 typev2 n=1: code 246, mixed 91, prose 72, realjob 162, chitchat 62. Current stack is at or above that, <em>with</em> LMCache retrieve.</p>
+
+<h2>typev2 n=1 decode tok/s (W4A16 draft)</h2>
+<table>
+<tr><th>Type</th><th>0.27.1 (8/21)</th><th>0.28 PIECEWISE (8/28 15:22)</th><th>0.28 FULL + #54165 (now)</th></tr>
+<tr><td>code</td><td>246</td><td class="lose">129</td><td class="win">268</td></tr>
+<tr><td>mixed</td><td>91</td><td class="lose">59</td><td class="win">97</td></tr>
+<tr><td>prose</td><td>72</td><td class="lose">45</td><td class="win">76</td></tr>
+<tr><td>realjob</td><td>162</td><td>—</td><td class="win">165</td></tr>
+<tr><td>chitchat</td><td>62</td><td>—</td><td class="win">67</td></tr>
+</table>
+
+<h2>DFlash2-W4A16 acceptance (typev2, this run)</h2>
+<table>
+<tr><th>Type</th><th>Accepted / draft</th><th>Rate</th></tr>
+<tr><td>code</td><td>379 / 469</td><td class="win">80.8%</td></tr>
+<tr><td>realjob</td><td>856 / 2520</td><td>34.0%</td></tr>
+<tr><td>mixed</td><td>699 / 2877</td><td>24.3%</td></tr>
+<tr><td>prose</td><td>411 / 2835</td><td>14.5%</td></tr>
+<tr><td>chitchat</td><td>249 / 2009</td><td>12.4%</td></tr>
+</table>
+<p class="muted">High-entropy drop is the 4-bit draft, not 0.28. Same shape as 0.27.1 W4.</p>
+
+<h2>Why LMCache</h2>
+<p>vLLM GPU prefix cache dies when the engine restarts or the KV pool evicts. LMCache keeps the same hashed chunks in RAM (L1) and on a big disk (L2). Next request with the same system/tool prefix does a retrieve instead of a full prefill.</p>
+<ul>
+<li><strong>Reuse:</strong> agent system+tool prefix is 20–28k tokens. After the first store, later turns pull it back in 6–9 ms (<code>Retrieved 25600 tokens in 0.007s</code>). During the second MeowChat soak, read/write token ratio was ~74:1.</li>
+<li><strong>Disk is cheap:</strong> L2 sits on a 1.5 TB NVMe pool. That soak grew L2 to ~22 GB without touching GPU KV capacity. Prefixes survive engine restarts; wipe L2 only when the hash geometry changes (block size / dtype).</li>
+</ul>
+<p class="muted">0.28.0 silently replaces <code>LMCacheMPConnector</code> with <code>OffloadingConnector</code> if you also pass <code>--kv-offloading-*</code>. Do not combine them.</p>
+
+<h2>Hardware / serving</h2>
+<table>
+<tr><th>Item</th><th>Detail</th></tr>
+<tr><td>GPU</td><td>2× RTX 3090 24 GB TP2, PL 250 W, P2P on</td></tr>
+<tr><td>vLLM</td><td>0.28.0 + #54165 + #50885 + <code>_dense_kv_rows()</code></td></tr>
+<tr><td>LMCache</td><td>0.5.4rc5, chunk 1600, LMCacheMPConnector kv_both</td></tr>
+<tr><td>Target</td><td>cyankiwi/Qwen3.8-27B-AWQ-INT4 (hybrid GDN)</td></tr>
+<tr><td>Draft</td><td>DFlash2-W4A16-GPTQ, method=dflash, K=7</td></tr>
+<tr><td>Geometry</td><td>block 1600, batched 2048, mamba bf16, align, FP8 KV, max-len 256k, util 0.84 (FULL graphs OOM at 0.88)</td></tr>
+</table>
+
+<pre>vLLM 0.28.0
+  + #54165 (DFlash is not EAGLE for mamba last-block)
+  + #50885 (FlashInfer native FULL decode CUDA graphs)
+LMCache 0.5.4rc5  LMCacheMPConnector kv_both
+spec = DFlash2-W4A16-GPTQ  K=7
+block 1600 / chunk 1600 / batched 2048 / util 0.84</pre>
+
+<h2>Two bugs stock 0.28.0 still has</h2>
+<ul>
+<li><strong>vLLM#53505 / missing #54165.</strong> <code>use_eagle()</code> includes dflash, so mamba backs <code>last_cache_position</code> off by one 1600-token block and native offload marks every KV group eagle. Retrieve hit = instant salad (worse than 0.27.1 accumulating). #48375 (drop_eagle_block in MambaManager) only cleaned the short temp=0 cell.</li>
+<li><strong>Missing #50885.</strong> FlashInfer native on sm_86 reports <code>UNIFORM_SINGLE_TOKEN_DECODE</code>, so spec verify (q_len=8) drops <code>FULL_AND_PIECEWISE</code> → <code>PIECEWISE</code>. GDN already reports <code>UNIFORM_BATCH</code>; FlashInfer was the min. After the port: log shows <code>Capturing CUDA graphs (FULL)</code> and no downgrade warning.</li>
+</ul>
+
+<h2>Notes</h2>
+<ul>
+<li>#52816 / #52883 are in 0.28.0. Packed W4/W8 drafts still need <code>_dense_kv_rows()</code>.</li>
+<li>#54165 and #50885 were still OPEN on 2026-08-28. These are local ports.</li>
+<li>Force <code>--mamba-ssm-cache-dtype bfloat16</code> or attention block becomes 3200 and LMCache register dies (<code>sliding window 2048 must be a multiple of tokens_per_block 3200</code>).</li>
+<li>json: <code>typev2_20260828_50885_w4a16.json</code>, <code>typev1_20260828_50885_w4a16.json</code>.</li>
+</ul>
+
+</body>
+</html>

@@ -49,6 +49,7 @@ Full matrix in [FIELD_NOTES.md](FIELD_NOTES.md).
 
 | | raw | preview |
 |--|-----|---------|
+| **0.28.0 + DFlash2 + LMCache (2026-08-28)** | [html](reports/qwen38_0280_dflash2_lmcache_20260828.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_0280_dflash2_lmcache_20260828.html) |
 | Drafter compare 2026-08-19 | [html](reports/qwen38_int4_spec_drafter_compare_20260819.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_int4_spec_drafter_compare_20260819.html) |
 | FP8 3090 | [html](reports/qwen38_fp8_forum_post_3090_20260818.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_fp8_forum_post_3090_20260818.html) |
 | FP8 3080 | [html](reports/qwen38_fp8_forum_post.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_fp8_forum_post.html) |
