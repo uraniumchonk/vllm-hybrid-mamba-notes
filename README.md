@@ -32,10 +32,10 @@ DFlash from 2026-08-28 (this stack).
 | prose | 70 | 76 | 1.1× |
 
 **Why this is the goat.** DFlash multiplies decode on structured
-output (code, real agent jobs) without a second GPU. LMCache is the
-other half: GPU KV is only ~343k tokens and dies on restart; L2 is
+output (code, real agent jobs). LMCache is the
+other half: GPU KV is only +343k tokens and dies on restart; L2 is
 a 1.5 TB disk you can fill. The 20–28k agent system/tool prefix
-stores once, then comes back in 6–9 ms. Spec makes tokens cheap;
+stores once, then comes back in 300~500 ms. Spec makes tokens cheap;
 LMCache makes the prompt free the second time. Together you keep
 DFlash speed *and* prefix TTFT across engine restarts.
 
@@ -60,10 +60,10 @@ Full matrix in [FIELD_NOTES.md](FIELD_NOTES.md).
 |------|------|
 | Target | [cyankiwi/Qwen3.8-27B-AWQ-INT4](https://huggingface.co/cyankiwi/Qwen3.8-27B-AWQ-INT4) |
 | DFlash2 BF16 | [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) |
-| DFlash2 W4A16 GPTQ | local `Qwen3.8-27B-DFlash2-W4A16-GPTQ` |
+| DFlash2 W4A16 GPTQ | Quant from bf16 to w4a16 use our real chat text for acceptance rate. |
 | DSpark | [RadixArk/Qwen3.8-27B-DSpark](https://huggingface.co/RadixArk/Qwen3.8-27B-DSpark) |
 
-## Reports
+## Full Performance Reports
 
 | | raw | preview |
 |--|-----|---------|
