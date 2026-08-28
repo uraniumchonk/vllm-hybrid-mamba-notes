@@ -25,6 +25,18 @@
 <h1>The good stack (2026-08-28)</h1>
 <p class="muted">vLLM 0.28.0 + DFlash2-W4A16-GPTQ K=7 + LMCache 0.5.4rc5. Qwen3.8-27B-AWQ-INT4 hybrid GDN, 2× RTX 3090 TP2. Local ports of vLLM#54165 and #50885.</p>
 
+<h2>DFlash vs no-DFlash (n=1 decode tok/s)</h2>
+<p class="muted">Same INT4 target, 2×3090 TP2. No-DFlash: 2026-08-23 (~70 tok/s on every type). DFlash: this stack, 2026-08-28.</p>
+<table>
+<tr><th>Type</th><th>No DFlash</th><th>DFlash2-W4 K=7</th><th></th></tr>
+<tr><td>code</td><td>71</td><td class="win">268</td><td>3.8×</td></tr>
+<tr><td>realjob</td><td>~70</td><td class="win">165</td><td>2.4×</td></tr>
+<tr><td>mixed</td><td>70</td><td class="win">97</td><td>1.4×</td></tr>
+<tr><td>prose</td><td>70</td><td>76</td><td>1.1×</td></tr>
+</table>
+<p>DFlash is a tiny extra draft network on the same GPUs. Verify 7 tokens per step; when it hits (code 81% accept) you skip most target forwards. When it misses (prose/chitchat) you pay draft cost and land near the no-spec 70 tok/s floor.</p>
+<p><strong>LMCache is the other half.</strong> GPU KV is ~343k tokens and vanishes when the engine restarts. LMCache keeps the same hashed chunks in RAM (L1) and on a 1.5 TB NVMe pool (L2) you can fill without touching VRAM. The 20–28k agent system/tool prefix stores once, then <code>Retrieved 25600 tokens in 0.007s</code>. Spec makes decode cheap; LMCache makes the prompt free the second time — including after a reboot. That pairing is the goat: DFlash speed <em>and</em> prefix TTFT, on 48 GB of GPU plus a disk.</p>
+
 <h2>Headline numbers</h2>
 <table>
 <tr><th>What</th><th>Before (stock 0.28 / PIECEWISE)</th><th>Now (#54165 + #50885)</th></tr>

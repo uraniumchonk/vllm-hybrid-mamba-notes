@@ -21,6 +21,25 @@ block-size 1600 / chunk-size 1600 / max-num-batched-tokens 2048
 gpu-memory-utilization 0.84
 ```
 
+n=1 decode tok/s, same INT4 target, 2×3090. No-DFlash from 2026-08-23
+(~70 tok/s on every type — decode is memory-bound). DFlash from
+2026-08-28 (this stack).
+
+| type | no DFlash | DFlash2-W4 K=7 | |
+|------|-----------|----------------|--|
+| code | 71 | **268** | 3.8× |
+| realjob | ~70 | **165** | 2.4× |
+| mixed | 70 | **97** | 1.4× |
+| prose | 70 | 76 | 1.1× |
+
+**Why this is the goat.** DFlash multiplies decode on structured
+output (code, real agent jobs) without a second GPU. LMCache is the
+other half: GPU KV is only ~343k tokens and dies on restart; L2 is
+a 1.5 TB disk you can fill. The 20–28k agent system/tool prefix
+stores once, then comes back in 6–9 ms. Spec makes tokens cheap;
+LMCache makes the prompt free the second time. Together you keep
+DFlash speed *and* prefix TTFT across engine restarts.
+
 Do not run stock 0.28.0 with LMCache+DFlash. Do not pass
 `--kv-offloading-*` next to LMCacheMPConnector.
 
