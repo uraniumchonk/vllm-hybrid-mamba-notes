@@ -21,11 +21,10 @@ block-size 1600 / chunk-size 1600 / max-num-batched-tokens 2048
 gpu-memory-utilization 0.94
 ```
 
-n=1 decode tok/s, same INT4 target, 2×3090. No-DFlash from 2026-08-23
-(~70 tok/s on every type — decode is memory-bound). DFlash from
-2026-08-28 (this stack).
+n=1 decode tok/s, same INT4 target, 2×3090. 
+DFlash from 2026-08-28 (this stack).
 
-| type | no DFlash | DFlash2-W4 K=7 | |
+| type | no DFlash | DFlash2 W4A16 K=7 | |
 |------|-----------|----------------|--|
 | code | 71 | **268** | 3.8× |
 | realjob | ~70 | **165** | 2.4× |
