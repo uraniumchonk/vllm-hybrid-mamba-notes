@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PCIe P2P vs host staging (2026-09-11)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 920px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 28px; color: #222; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #ddd; }
+  td { padding: 7px 12px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 600; }
+  .lose { color: #cf222e; font-weight: 600; }
+  .muted { color: #666; font-size: 13px; }
+  ul { margin: 8px 0 20px; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  pre { background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.5; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+
+<h1>PCIe P2P vs host staging: +22% decode (2026-09-11)</h1>
+<p class="muted">2× RTX 3090 (PCIe via PEX switch, no NVLink bridge installed), TP2. Qwen3.8-27B-AWQ-INT4 + DFlash2-W4A16-GPTQ K=7, vLLM 0.28.0 (+ local ports), LMCache 0.5.4rc5. typev2 bench, n=1/4, max 256 tokens, temp 0. Means over 2 runs (no P2P) and 3 runs (P2P), same day, same weights.</p>
+
+<h2>Headline</h2>
+<table>
+<tr><th></th><th>No P2P (allreduce via host staging)</th><th>PCIe P2P</th><th></th></tr>
+<tr><td>decode tok/s (mean of 12 configs)</td><td></td><td></td><td class="win">+22.0%</td></tr>
+<tr><td>AGG tok/s (mean of 12 configs)</td><td></td><td></td><td class="win">+20.8%</td></tr>
+<tr><td>ITL P99 (avg across configs)</td><td>103.5 ms</td><td class="win">76.5 ms</td><td class="win">-26%</td></tr>
+<tr><td>DFlash2 acceptance</td><td></td><td></td><td>unchanged</td></tr>
+</table>
+<p>The gain shows up on every type and both concurrency levels. It is not a
+prefill artifact: the ITL tail shrinks (smoother streaming) and aggregate
+throughput rises in lockstep with single-stream decode.</p>
+
+<h2>Why: the allreduce transport switched</h2>
+<p>TP2 needs an allreduce every layer. Consumer GeForce cards are blocked from
+peer access by the stock driver, so NCCL stages through host memory (SMH):
+GPU→CPU→GPU over PCIe. This box enables real P2P with a patched open kernel
+module; when that module is active, vLLM's CUSTOM allreduce rides PCIe P2P
+instead.</p>
+<table>
+<tr><th>Evidence</th><th>No P2P</th><th>P2P</th></tr>
+<tr><td><code>cudaDeviceCanAccessPeer</code> (all pairs)</td><td class="lose">0</td><td class="win">1</td></tr>
+<tr><td><code>cudaMemcpyPeer</code> 256 MB</td><td class="lose">n/a (no peer access)</td><td class="win">25.59 GB/s, data check PASS</td></tr>
+<tr><td>vLLM allreduce backend</td><td class="lose"><code>['PYNCCL']</code></td><td class="win"><code>['CUSTOM', 'PYNCCL']</code></td></tr>
+<tr><td>GSP firmware</td><td>N/A (disabled)</td><td>610.43.02 active</td></tr>
+<tr><td>Kernel module</td><td>stock proprietary 610.43.02</td><td>patched open 610.43.02</td></tr>
+</table>
+<p class="muted">Out of the candidates ['NCCL_SYMM_MEM', 'QUICK_REDUCE', 'FLASHINFER', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'], only PYNCCL survives without peer access. With P2P, CUSTOM leads and PYNCCL stays as fallback.</p>
+
+<h2>n=1 decode tok/s by type</h2>
+<table>
+<tr><th>type</th><th>host staging</th><th>P2P</th><th>delta</th></tr>
+<tr><td>code</td><td>211.4</td><td class="win">265.3</td><td>+25.5%</td></tr>
+<tr><td>numeric</td><td>240.9</td><td class="win">290.9</td><td>+20.7%</td></tr>
+<tr><td>realjob</td><td>142.3</td><td class="win">159.1</td><td>+11.8%</td></tr>
+<tr><td>mixed</td><td>88.0</td><td class="win">97.0</td><td>+10.3%</td></tr>
+<tr><td>prose</td><td>64.2</td><td class="win">74.3</td><td>+15.8%</td></tr>
+<tr><td>chitchat</td><td>58.7</td><td class="win">64.5</td><td>+9.9%</td></tr>
+</table>
+
+<h2>n=4 aggregate tok/s by type</h2>
+<table>
+<tr><th>type</th><th>host staging</th><th>P2P</th><th>delta</th></tr>
+<tr><td>numeric</td><td>575.2</td><td class="win">715.9</td><td>+24.4%</td></tr>
+<tr><td>code</td><td>385.0</td><td class="win">456.0</td><td>+18.4%</td></tr>
+<tr><td>mixed</td><td>217.1</td><td class="win">265.2</td><td>+22.2%</td></tr>
+<tr><td>realjob</td><td>157.9</td><td class="win">185.2</td><td>+17.3%</td></tr>
+<tr><td>prose</td><td>158.7</td><td class="win">188.4</td><td>+18.7%</td></tr>
+<tr><td>chitchat</td><td>99.8</td><td class="win">133.1</td><td>+33.4%</td></tr>
+</table>
+
+<h2>How to lose P2P without noticing</h2>
+<p>On this box the trap is a kernel upgrade: dkms rebuilds the <strong>stock</strong>
+module for the new kernel into <code>updates/dkms/</code>, which outranks the
+patched open module (installed under <code>kernel/drivers/video/</code>). The
+next boot loads the stock module, <code>NVreg_EnableGpuFirmware=0</code> takes
+effect (GSP off), and peer access silently disappears — no error, vLLM just
+falls back to PYNCCL. Symptom checks:</p>
+<pre>journalctl -b 0 | grep "loading NVIDIA"     # "Open Kernel Module" vs plain
+nvidia-smi -q | grep "GSP Firmware"          # N/A = GSP off
+~/card/p2p_check_new 0 1                     # canAccessPeer matrix + GB/s
+curl -s .../logs/stream/qwen-27b-default | grep "all-reduce"   # PYNCCL-only = staging</pre>
+
+<h2>Notes</h2>
+<ul>
+<li>Same weights, same prompts, same engine flags on both sides; only the
+kernel module (and thus GSP/P2P state) differed. Runner:
+<code>run_typev2_bench.py</code> (realjob + chitchat + 4 synthetic types,
+anti-cache nonces on synthetic).</li>
+<li>Retail 3090s over a PCIe switch; no NVLink bridge. P2P here is PCIe-level
+(25.6 GB/s memcpyPeer, x16 Gen4-class).</li>
+<li>spec acceptance is unchanged within run noise — the delta is transport,
+not draft quality.</li>
+<li>json: <code>typev2_nop2p_20260911*.json</code> (2 runs),
+<code>typev2_p2p_20260911*.json</code> (3 runs) — local.</li>
+</ul>
+
+</body>
+</html>

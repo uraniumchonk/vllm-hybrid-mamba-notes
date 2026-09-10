@@ -547,7 +547,38 @@ on the same weights.
 
 ---
 
-## 11. Disclaimer
+## 11. PCIe P2P vs host staging (SMH) — measured +22% decode (2026-09-11)
+
+TP2 allreduce transport is a switch on this box. With the patched open
+kernel module active, the 3090s get peer access and vLLM runs its CUSTOM
+allreduce over PCIe P2P (memcpyPeer 25.6 GB/s). With the stock module —
+or whenever the patched module is not what booted — peer access is
+refused (canAccessPeer all 0) and vLLM drops to PYNCCL only: allreduce
+goes through host memory. Same weights, same requests, 2×3090 TP2:
+
+| (means over runs) | host staging | P2P | delta |
+|---|---|---|---|
+| decode tok/s, mean of 12 configs | — | — | **+22.0%** |
+| AGG tok/s, mean of 12 configs | — | — | **+20.8%** |
+| ITL P99 (avg) | 103.5 ms | 76.5 ms | **-26%** |
+| spec acceptance | unchanged | | — |
+
+n=1 decode tok/s: code 211→265, numeric 241→291, realjob 142→159,
+mixed 88→97, prose 64→74, chitchat 59→65.
+
+The trap that costs you P2P silently: a **kernel upgrade** makes dkms
+rebuild the stock module into `updates/dkms/` (higher depmod priority
+than the patched open module under `kernel/drivers/video/`); the stock
+module honors `NVreg_EnableGpuFirmware=0`, GSP goes off, P2P dies — no
+error, vLLM just falls back to PYNCCL. Fix = rebuild the patched open
+modules for the new kernel (see the meowhome-gpu-p2p skill for the exact
+procedure).
+
+Report + tables: [reports/gpu_p2p_vs_host_staging_20260911.html](reports/gpu_p2p_vs_host_staging_20260911.html).
+
+---
+
+## 12. Disclaimer
 
 Home lab, consumer GPUs, one model family. Other backends
 (FlashAttention vs FlashInfer), other block sizes, and other

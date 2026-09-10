@@ -67,6 +67,7 @@ Full matrix in [FIELD_NOTES.md](FIELD_NOTES.md).
 
 | | raw | preview |
 |--|-----|---------|
+| **PCIe P2P vs host staging (2026-09-11)** | [html](reports/gpu_p2p_vs_host_staging_20260911.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/gpu_p2p_vs_host_staging_20260911.html) |
 | **The good stack (2026-08-28)** | [html](reports/qwen38_0280_dflash2_lmcache_20260828.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_0280_dflash2_lmcache_20260828.html) |
 | Drafter compare 2026-08-19 | [html](reports/qwen38_int4_spec_drafter_compare_20260819.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_int4_spec_drafter_compare_20260819.html) |
 | FP8 3090 | [html](reports/qwen38_fp8_forum_post_3090_20260818.html) | [preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_fp8_forum_post_3090_20260818.html) |
