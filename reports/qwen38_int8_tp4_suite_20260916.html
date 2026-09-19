@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Qwen3.8-27B INT8 TP4 (4×3090): production lane full suite (2026-09-16)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 1120px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 23px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 19px; margin-top: 32px; color: #111; border-left: 4px solid #444; padding-left: 10px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: #333; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 13.5px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 7px 10px; border: 1px solid #ddd; }
+  td { padding: 6px 10px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 700; }
+  .lose { color: #cf222e; font-weight: 700; }
+  .muted { color: #666; font-size: 12.5px; }
+  code { font-family: "SF Mono", Consolas, monospace; background: #f6f8fa; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<h1>Qwen3.8-27B INT8 TP4 (4×3090): production lane full suite</h1>
+<p class="muted">2026-09-16 · meowhome (192.168.0.160) · 4× RTX 3090 96GB (PCIe P2P 12/12 pairs, 26.3 GB/s, open module 610.43.02, PL 250W) · Qwen3.8-27B INT8 W8A16 + DFlash2-W8 draft (K=7) · vLLM 0.28.0 · LMCache kv_both · block-size 1600 · fp8 KV · max-model-len 262,144 · KV 753,969 tokens.<br>
+bench: <code>bench_suite.py suite</code> (typev2 + ctx + conc + prefix), temp 0, max 256 tokens, anti-cache. Each cell is a single measurement.</p>
+
+<h2>Config (production lane, <code>qwen-27b-default</code>)</h2>
+<table>
+<tr><th>key</th><th>value</th></tr>
+<tr><td>target</td><td>Qwen3.8-27B INT8 W8A16</td></tr>
+<tr><td>draft (spec)</td><td>DFlash2-W8, K=7</td></tr>
+<tr><td>parallelism</td><td>TP4 on 4× RTX 3090 96GB</td></tr>
+<tr><td>compute / KV</td><td>bfloat16 / fp8_e4m3</td></tr>
+<tr><td>KV cache</td><td>753,969 tokens (2.88× concurrency at 262K)</td></tr>
+<tr><td>max-model-len</td><td>262,144</td></tr>
+<tr><td>block-size / batched tokens</td><td>1600 / 2048</td></tr>
+<tr><td>attention</td><td>FLASHINFER, max-num-seqs 4</td></tr>
+<tr><td>LMCache</td><td>MP connector tcp://127.0.0.1:10001, kv_both, prefix caching + chunked prefill</td></tr>
+<tr><td>NCCL P2P</td><td>on (NCCL_P2P_LEVEL=PXB)</td></tr>
+<tr><td>sampling</td><td>temp 0.7, thinking off, tool parser qwen3_coder</td></tr>
+</table>
+
+<h2>A. Headline — 6 lanes, same day</h2>
+<p class="muted">All lanes measured 2026-09-16 on the same machine. INT8 lanes: W8A16 target + DFlash2-W8 draft (K=7). INT4 lanes: AWQ-INT4 target + DFlash2 draft (K=7), except the no-spec lane. <b>Production = last column</b> (full KV 753,969 tokens); the "INT8 TP4" column is the same production config without the symm flag (see Conclusion 4). Green = best in row.</p>
+<h3>decode tok/s (n=1)</h3>
+<table><tr><th>type</th><th>TP2 INT4</th><th>INT4 TP4</th><th>INT4 TP4 no-P2P</th><th>INT8 TP4 no-spec</th><th>INT8 TP4</th><th>INT8 TP4 symm</th></tr>
+<tr><td>numeric</td><td>274.6</td><td><span class="win">300.0</span></td><td>194.3</td><td>74.7</td><td>262.6</td><td>271.8</td></tr>
+<tr><td>code</td><td><span class="win">265.2</span></td><td>260.8</td><td>162.7</td><td>74.9</td><td>218.4</td><td>224.1</td></tr>
+<tr><td>prose</td><td>77.6</td><td><span class="win">82.1</span></td><td>53.8</td><td>74.1</td><td>66.6</td><td>65.9</td></tr>
+<tr><td>mixed</td><td>96.4</td><td><span class="win">103.7</span></td><td>61.1</td><td>73.3</td><td>94.2</td><td>86.2</td></tr>
+<tr><td>realjob</td><td>171.4</td><td><span class="win">180.2</span></td><td>111.9</td><td>—</td><td>158.2</td><td>157.7</td></tr>
+<tr><td>chitchat</td><td>59.2</td><td>59.5</td><td>38.8</td><td><span class="win">72.3</span></td><td>51.9</td><td>56.9</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>avg</td><td>157.4</td><td><span class="win">164.4</span></td><td>103.8</td><td>73.9</td><td>142.0</td><td>143.8</td></tr></table>
+<h3>aggregate tok/s (n=8)</h3>
+<table><tr><th>type</th><th>TP2 INT4</th><th>INT4 TP4</th><th>INT4 TP4 no-P2P</th><th>INT8 TP4 no-spec</th><th>INT8 TP4</th><th>INT8 TP4 symm</th></tr>
+<tr><td>numeric</td><td>705.5</td><td>754.8</td><td>373.3</td><td>245.3</td><td><span class="win">758.6</span></td><td>713.8</td></tr>
+<tr><td>code</td><td>481.2</td><td>474.2</td><td>258.1</td><td>211.6</td><td><span class="win">509.0</span></td><td>424.6</td></tr>
+<tr><td>prose</td><td>199.3</td><td><span class="win">230.5</span></td><td>107.5</td><td>225.0</td><td>206.1</td><td>177.7</td></tr>
+<tr><td>mixed</td><td>273.8</td><td><span class="win">303.4</span></td><td>137.3</td><td>194.1</td><td>272.1</td><td>238.6</td></tr>
+<tr><td>realjob</td><td>156.4</td><td>202.9</td><td>101.0</td><td>161.8</td><td>211.7</td><td><span class="win">235.0</span></td></tr>
+<tr><td>chitchat</td><td>141.0</td><td><span class="win">171.3</span></td><td>68.0</td><td>158.1</td><td>135.0</td><td>133.5</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>avg</td><td>326.2</td><td><span class="win">356.2</span></td><td>174.2</td><td>199.3</td><td>348.7</td><td>320.5</td></tr></table>
+<h3>ctx — prefill tok/s (n=1)</h3>
+<table><tr><th>ctx</th><th>TP2 INT4</th><th>INT4 TP4</th><th>INT4 TP4 no-P2P</th><th>INT8 TP4 no-spec</th><th>INT8 TP4</th><th>INT8 TP4 symm</th></tr>
+<tr><td>1k prefill tok/s</td><td>1,881.5</td><td><span class="win">2,930.7</span></td><td>830.1</td><td>2,917.0</td><td>2,794.0</td><td>2,765.3</td></tr>
+<tr><td>16k prefill tok/s</td><td>1,784.2</td><td><span class="win">2,884.8</span></td><td>823.3</td><td>2,847.9</td><td>2,740.9</td><td>2,718.6</td></tr>
+<tr><td>64k prefill tok/s</td><td>1,484.4</td><td><span class="win">2,430.4</span></td><td>790.9</td><td>2,418.0</td><td>2,319.9</td><td>2,306.6</td></tr>
+</table>
+<h3>spec acceptance</h3>
+<table><tr><th></th><th>TP2 INT4</th><th>INT4 TP4</th><th>INT4 TP4 no-P2P</th><th>INT8 TP4 no-spec</th><th>INT8 TP4</th><th>INT8 TP4 symm</th></tr>
+<tr><td>acceptance rate</td><td>0.322</td><td>0.316</td><td>0.309</td><td>—</td><td>0.324</td><td>0.324</td></tr></table>
+
+<h2>B. Production lane detail</h2>
+<h3>decode tok/s (n=1)</h3>
+<table><tr><th>type</th><th>tok/s</th></tr>
+<tr><td>numeric</td><td>271.8</td></tr>
+<tr><td>code</td><td>224.1</td></tr>
+<tr><td>prose</td><td>65.9</td></tr>
+<tr><td>mixed</td><td>86.2</td></tr>
+<tr><td>realjob</td><td>157.7</td></tr>
+<tr><td>chitchat</td><td>56.9</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>avg</td><td>143.8</td></tr></table>
+<h3>aggregate tok/s (n=4)</h3>
+<table><tr><th>type</th><th>tok/s</th></tr>
+<tr><td>numeric</td><td>646.8</td></tr>
+<tr><td>code</td><td>474.5</td></tr>
+<tr><td>prose</td><td>198.0</td></tr>
+<tr><td>mixed</td><td>260.4</td></tr>
+<tr><td>realjob</td><td>176.7</td></tr>
+<tr><td>chitchat</td><td>122.6</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>avg</td><td>313.2</td></tr></table>
+<h3>aggregate tok/s (n=8)</h3>
+<table><tr><th>type</th><th>tok/s</th></tr>
+<tr><td>numeric</td><td>713.8</td></tr>
+<tr><td>code</td><td>424.6</td></tr>
+<tr><td>prose</td><td>177.7</td></tr>
+<tr><td>mixed</td><td>238.6</td></tr>
+<tr><td>realjob</td><td>235.0</td></tr>
+<tr><td>chitchat</td><td>133.5</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>avg</td><td>320.5</td></tr></table>
+<h3>latency (median across 6 types)</h3>
+<table><tr><th>metric</th><th>value</th></tr>
+<tr><td>TTFT p99 (s), n=1</td><td>0.22</td></tr>
+<tr><td>TTFT p99 (s), n=8</td><td>3.97</td></tr>
+<tr><td>ITL p99 (ms), n=1</td><td>33.8</td></tr>
+<tr><td>ITL p99 (ms), n=8</td><td>159.1</td></tr></table>
+<h3>ctx — prefill / decode / TTFT p99 (n=1)</h3>
+<table><tr><th>ctx</th><th>value</th></tr>
+<tr><td>1k prefill tok/s</td><td>2,765.3</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k decode tok/s</td><td>51.6</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k TTFT p99 (s)</td><td>0.39</td></tr>
+<tr><td>4k prefill tok/s</td><td>2,806.7</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k decode tok/s</td><td>63.9</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k TTFT p99 (s)</td><td>1.47</td></tr>
+<tr><td>16k prefill tok/s</td><td>2,718.6</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k decode tok/s</td><td>57.8</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k TTFT p99 (s)</td><td>5.99</td></tr>
+<tr><td>32k prefill tok/s</td><td>2,553.1</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k decode tok/s</td><td>57.1</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k TTFT p99 (s)</td><td>12.73</td></tr>
+<tr><td>64k prefill tok/s</td><td>2,306.6</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k decode tok/s</td><td>63.5</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k TTFT p99 (s)</td><td>28.15</td></tr>
+</table>
+<h3>ctx — prefill tok/s (n=8)</h3>
+<table><tr><th>ctx</th><th>tok/s</th></tr>
+<tr><td>1k</td><td>886.2</td></tr>
+<tr><td>4k</td><td>924.5</td></tr>
+<tr><td>16k</td><td>857.7</td></tr>
+<tr><td>32k</td><td>854.3</td></tr>
+<tr><td>64k</td><td>776.9</td></tr>
+</table>
+<h3>conc — aggregate tok/s (1k prompt)</h3>
+<table><tr><th>n</th><th>aggregate tok/s</th><th>decode tok/s</th></tr>
+<tr><td>n=1</td><td>29.4</td><td>52.9</td></tr>
+<tr><td>n=4</td><td>50.6</td><td>30.6</td></tr>
+<tr><td>n=8</td><td>48.4</td><td>22.7</td></tr>
+</table>
+<h3>prefix cache (4k prompt)</h3>
+<table><tr><th>round</th><th>TTFT (s)</th><th>prefill tok/s</th><th>decode tok/s</th></tr>
+<tr><td>cold</td><td>0.984</td><td>4,142.4</td><td>254.6</td></tr>
+<tr><td>hot</td><td>0.339</td><td>12,020.8</td><td>252.7</td></tr>
+<tr><td>hot</td><td>0.339</td><td>12,017.5</td><td>253.7</td></tr>
+</table>
+<p><b>speedup: 2.90x</b> (cold → hot)</p>
+<h3>spec acceptance (DFlash2-W8, K=7)</h3>
+<table><tr><th></th><th>value</th></tr>
+<tr><td>rate (accepted/draft)</td><td>0.324</td></tr>
+<tr><td>accepted / draft tokens</td><td>9,726 / 30,016</td></tr>
+<tr><td>drafts</td><td>4,288</td></tr>
+<tr><td>pos0</td><td>2,727</td></tr>
+<tr><td>pos1</td><td>1,763</td></tr>
+<tr><td>pos2</td><td>1,343</td></tr>
+<tr><td>pos3</td><td>1,139</td></tr>
+<tr><td>pos4</td><td>1,007</td></tr>
+<tr><td>pos5</td><td>910</td></tr>
+<tr><td>pos6</td><td>837</td></tr>
+</table>
+
+<h2>C. Cross comparison</h2>
+<h3>spec gain (INT8 TP4: +spec → no-spec)</h3>
+<table><tr><th>metric</th><th>change</th></tr>
+<tr><td>decode tok/s n=1 (avg)</td><td class="lose">143.8 → 73.9 (-48.6%)</td></tr>
+<tr><td>aggregate tok/s n=4 (avg)</td><td class="lose">313.2 → 186.5 (-40.4%)</td></tr>
+<tr><td>aggregate tok/s n=8 (avg)</td><td class="lose">320.5 → 199.3 (-37.8%)</td></tr>
+<tr><td>prefill 1k tok/s</td><td class="win">2,765.3 → 2,917.0 (+5.5%)</td></tr>
+</table>
+<h3>P2P gain (INT4 TP4: P2P on → off)</h3>
+<table><tr><th>metric</th><th>change</th></tr>
+<tr><td>decode tok/s n=1 (avg)</td><td class="lose">164.4 → 103.8 (-36.9%)</td></tr>
+<tr><td>prefill 1k tok/s</td><td class="lose">2,930.7 → 830.1 (-71.7%)</td></tr>
+<tr><td>prefill 16k tok/s</td><td class="lose">2,884.8 → 823.3 (-71.5%)</td></tr>
+<tr><td>prefill 64k tok/s</td><td class="lose">2,430.4 → 790.9 (-67.5%)</td></tr>
+</table>
+<h3>4-card vs 2-card (production vs TP2 INT4 baseline)</h3>
+<table><tr><th>metric</th><th>change</th></tr>
+<tr><td>decode numeric n=1</td><td class="lose">274.6 → 271.8 (-1.0%)</td></tr>
+<tr><td>decode code n=1</td><td class="lose">265.2 → 224.1 (-15.5%)</td></tr>
+<tr><td>decode avg n=1</td><td class="lose">157.4 → 143.8 (-8.7%)</td></tr>
+<tr><td>prefill 1k tok/s</td><td class="win">1,881.5 → 2,765.3 (+47.0%)</td></tr>
+<tr><td>prefill 16k tok/s</td><td class="win">1,784.2 → 2,718.6 (+52.4%)</td></tr>
+<tr><td>prefill 64k tok/s</td><td class="win">1,484.4 → 2,306.6 (+55.4%)</td></tr>
+<tr><td>aggregate numeric n=8</td><td class="win">705.5 → 713.8 (+1.2%)</td></tr>
+</table>
+<h3>INT4 vs INT8 (same TP4 + spec)</h3>
+<table><tr><th>metric</th><th>change</th></tr>
+<tr><td>decode numeric n=1</td><td class="lose">300.0 → 271.8 (-9.4%)</td></tr>
+<tr><td>decode code n=1</td><td class="lose">260.8 → 224.1 (-14.1%)</td></tr>
+<tr><td>prefill 1k tok/s</td><td class="lose">2,930.7 → 2,765.3 (-5.6%)</td></tr>
+</table>
+
+<h2>Conclusions</h2>
+<ol>
+<li><b>DFlash2 spec decode is the decode lifeline.</b> INT8 TP4 no-spec 75 tok/s → with spec 272 tok/s (3.5×). The no-spec INT8 4-card config is dead.</li>
+<li><b>P2P is the prefill lifeline.</b> TP4 with P2P off: prefill 1k 2,931 → 830 tok/s (3.5× gap). A P2P loss (Xid120 / GSP) is a disaster.</li>
+<li><b>Production vs 2-card baseline:</b> single-stream decode is a wash (272 vs 275 numeric), prefill 1.5× (2,765 vs 1,882), n8 aggregate a wash (714 vs 706). The cost of 4-card + INT8 + spec: decode does not get faster; what you buy is 262K ctx + 753K KV + 1.5× prefill.</li>
+<li><b>The symm flag is a no-op on 3090 (sm_86).</b> SymmMemCommunicator does not support Ampere; symm vs non-symm is within noise.</li>
+<li><b>INT4 4-card lanes are dead.</b> No-spec 4-card (TP2×PP2 / TP4) decodes at 74–99 tok/s, far below INT8 + spec; INT4 + spec leads INT8 by only +10–17% on decode (see decision below).</li>
+</ol>
+<p class="muted"><b>INT4 vs INT8 decision:</b> INT4 TP4+DFlash is faster on both sides but by a small margin (decode +10–17% / prefill +6%). W4A16 loops/repeats on long-context, multi-turn agent and tool-call workloads — the failure cost far exceeds +10% tok/s. <b>Default stays INT8 + DFlash2.</b> The value of 4 cards is prefill (~1.5×, near-linear) + 753K KV + 262K ctx + concurrency, not 2× single-stream decode (single-stream TP2→TP4 is only 1.09–1.41× — the PCIe allreduce latency wall, a physical limit, not a config issue).</p>
+</body></html>
