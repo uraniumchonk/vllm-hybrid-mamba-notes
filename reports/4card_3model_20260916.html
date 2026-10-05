@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>4 卡比較：TP4 / TP2×PP2 / INT8-TP4 ×{spec, no-spec} + no-P2P（2026-09-16）</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a1a; max-width: 1120px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 23px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 19px; margin-top: 32px; color: #111; border-left: 4px solid #444; padding-left: 10px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: #333; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 13.5px; }
+  th { background: #f2f2f2; font-weight: 600; text-align: left; padding: 7px 10px; border: 1px solid #ddd; }
+  td { padding: 6px 10px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .win { color: #1a7f37; font-weight: 700; }
+  .lose { color: #cf222e; font-weight: 700; }
+  .muted { color: #666; font-size: 12.5px; }
+  .blocked { color: #cf222e; font-weight: 600; }
+  code { font-family: "SF Mono", Consolas, monospace; background: #f6f8fa; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<h1>4 卡比較：TP4 / TP2×PP2 / INT8-TP4 ×{spec, no-spec} + no-P2P</h1>
+<p class="muted">2026-09-16 · GPU 主機· 4× RTX 3090（PCIe P2P 26.3 GB/s, open 模組 610.43.02）· Qwen3.8-27B · vLLM 0.28.0 · DFlash2 spec K=7 · LMCache kv_both · block-size 1600 · fp8 KV。<br>bench：<code>bench_suite.py suite</code>（typev2 + ctx + conc + prefix），temp 0，max 256 tokens，anti-cache。每格單次測量。</p>
+<h2>配置總表</h2><table><tr><th>lane</th><th>模型 / 平行</th><th>spec</th><th>P2P</th><th>備註</th></tr>
+<tr><td>現役 TP2</td><td>INT4 AWQ TP2 (0,1), util .88</td><td>DFlash2 K7</td><td>開</td><td></td></tr>
+<tr><td>TP4</td><td>INT4 AWQ TP4 (0-3), util .88</td><td>DFlash2 K7</td><td>開</td><td></td></tr>
+<tr><td>TP2×PP2</td><td>INT4 AWQ TP2×PP2 (0-3), util .88 vLLM 不支援 spec+PP（draft 無 SupportsPP）</td><td>—</td><td>開</td><td><span class="blocked">未跑/失敗</span></td></tr>
+<tr><td>INT8-TP4</td><td>INT8 W8A16 TP4, util .8, KV 6GiB（KV 定量 6GiB）</td><td>DFlash2 K7</td><td>開</td><td></td></tr>
+<tr><td>TP4 no-spec</td><td>無 spec</td><td>無</td><td>開</td><td></td></tr>
+<tr><td>TP2×PP2 no-spec</td><td>無 spec</td><td>無</td><td>開</td><td></td></tr>
+<tr><td>INT8-TP4 no-spec</td><td>無 spec（KV 定量 6GiB）</td><td>無</td><td>開</td><td></td></tr>
+<tr><td>TP4 no-P2P</td><td>P2P 關（NCCL_P2P_DISABLE=1 + 無 CUSTOM allreduce）</td><td>DFlash2 K7</td><td>關</td><td></td></tr>
+</table>
+<h2>A. spec-on（主對照）</h2>
+<p class="muted">tp2pp2 因 vLLM 不支援 spec+PP 無法以此配置啟動；int8 採定量 KV（6GiB）+ util 0.8。</p>
+<h3>decode tok/s（n=1）</h3>
+<table><tr><th>type</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>numeric</td><td>274.6</td><td><span class="win">300.0</span></td><td>256.3</td></tr>
+<tr><td>code</td><td><span class="win">265.2</span></td><td>260.8</td><td>227.7</td></tr>
+<tr><td>prose</td><td>77.6</td><td><span class="win">82.1</span></td><td>72.1</td></tr>
+<tr><td>mixed</td><td>96.4</td><td><span class="win">103.7</span></td><td>93.1</td></tr>
+<tr><td>realjob</td><td>171.4</td><td><span class="win">180.2</span></td><td>155.0</td></tr>
+<tr><td>chitchat</td><td>59.2</td><td><span class="win">59.5</span></td><td>55.2</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td>157.4</td><td><span class="win">164.4</span></td><td>143.2</td></tr></table>
+<h3>aggregate tok/s（n=4）</h3>
+<table><tr><th>type</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>numeric</td><td>693.1</td><td><span class="win">755.5</span></td><td>715.9</td></tr>
+<tr><td>code</td><td>459.5</td><td><span class="win">567.7</span></td><td>496.8</td></tr>
+<tr><td>prose</td><td>166.5</td><td><span class="win">209.5</span></td><td>204.4</td></tr>
+<tr><td>mixed</td><td>272.7</td><td><span class="win">296.3</span></td><td>227.8</td></tr>
+<tr><td>realjob</td><td>92.9</td><td><span class="win">122.5</span></td><td>111.1</td></tr>
+<tr><td>chitchat</td><td>115.7</td><td><span class="win">146.2</span></td><td>127.2</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td>300.1</td><td><span class="win">349.6</span></td><td>313.9</td></tr></table>
+<h3>aggregate tok/s（n=8）</h3>
+<table><tr><th>type</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>numeric</td><td>705.5</td><td><span class="win">754.8</span></td><td>728.7</td></tr>
+<tr><td>code</td><td>481.2</td><td>474.2</td><td><span class="win">511.6</span></td></tr>
+<tr><td>prose</td><td>199.3</td><td><span class="win">230.5</span></td><td>202.3</td></tr>
+<tr><td>mixed</td><td>273.8</td><td><span class="win">303.4</span></td><td>237.3</td></tr>
+<tr><td>realjob</td><td>156.4</td><td><span class="win">202.9</span></td><td>166.4</td></tr>
+<tr><td>chitchat</td><td>141.0</td><td><span class="win">171.3</span></td><td>125.0</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td>326.2</td><td><span class="win">356.2</span></td><td>328.5</td></tr></table>
+<h3>延遲（全 6 types 中位數）</h3><table><tr><th>指標</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>TTFT p99 (s), n=1</td><td><span class="win">0.091</span></td><td>0.158</td><td>0.258</td></tr>
+<tr><td>TTFT p99 (s), n=8</td><td>3.850</td><td><span class="win">3.270</span></td><td>3.865</td></tr>
+<tr><td>ITL p99 (ms), n=1</td><td><span class="win">30.1</span></td><td>30.2</td><td>34.0</td></tr>
+<tr><td>ITL p99 (ms), n=8</td><td>129.2</td><td>141.9</td><td><span class="win">121.9</span></td></tr>
+</table>
+<h3>ctx — prefill / decode / TTFT（n=1）</h3><table><tr><th>ctx</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>1k prefill tok/s</td><td>1,881.5</td><td><span class="win">2,930.7</span></td><td>2,815.7</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k decode tok/s</td><td>83.9</td><td><span class="win">91.5</span></td><td>48.9</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k TTFT p99 (s)</td><td>0.57</td><td><span class="win">0.36</span></td><td>0.38</td></tr>
+<tr><td>4k prefill tok/s</td><td>1,878.5</td><td><span class="win">2,988.2</span></td><td>2,863.2</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k decode tok/s</td><td>74.6</td><td><span class="win">85.2</span></td><td>69.1</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k TTFT p99 (s)</td><td>2.19</td><td><span class="win">1.38</span></td><td>1.44</td></tr>
+<tr><td>16k prefill tok/s</td><td>1,784.2</td><td><span class="win">2,884.8</span></td><td>2,756.8</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k decode tok/s</td><td>76.9</td><td><span class="win">77.9</span></td><td>55.3</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k TTFT p99 (s)</td><td>9.13</td><td><span class="win">5.64</span></td><td>5.91</td></tr>
+<tr><td>32k prefill tok/s</td><td>1,663.9</td><td><span class="win">2,706.6</span></td><td>2,590.4</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k decode tok/s</td><td>71.1</td><td><span class="win">74.3</span></td><td>67.4</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k TTFT p99 (s)</td><td>19.53</td><td><span class="win">12.01</span></td><td>12.55</td></tr>
+<tr><td>64k prefill tok/s</td><td>1,484.4</td><td><span class="win">2,430.4</span></td><td>2,337.2</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k decode tok/s</td><td>65.6</td><td><span class="win">90.9</span></td><td>68.2</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k TTFT p99 (s)</td><td>43.75</td><td><span class="win">26.72</span></td><td>27.79</td></tr>
+</table>
+<h3>conc — aggregate tok/s（1k prompt）</h3><table><tr><th>n</th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>n=1</td><td>33.6</td><td><span class="win">44.2</span></td><td>31.5</td></tr>
+<tr><td>n=4</td><td>48.2</td><td><span class="win">68.6</span></td><td>49.7</td></tr>
+<tr><td>n=8</td><td>48.2</td><td><span class="win">69.0</span></td><td>48.5</td></tr>
+</table>
+<h3>prefix cache（4k prompt）</h3><table><tr><th></th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>speedup</td><td>1.62x</td><td><span class="win">4.32x</span></td><td>4.30x</td></tr></table>
+<h3>spec acceptance（accepted/draft）</h3><table><tr><th></th><th>現役 TP2</th><th>TP4</th><th>INT8-TP4</th></tr>
+<tr><td>rate</td><td><span class="win">0.322</span></td><td>0.316</td><td>0.321</td></tr></table>
+<h2>B. no-spec 基準</h2>
+<p class="muted">無投機解碼；tp2pp2-nospec 為 PP2 可行性探測。</p>
+<h3>decode tok/s（n=1）</h3>
+<table><tr><th>type</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>numeric</td><td><span class="win">99.5</span></td><td>75.5</td><td>74.7</td></tr>
+<tr><td>code</td><td><span class="win">100.1</span></td><td>75.8</td><td>74.9</td></tr>
+<tr><td>prose</td><td><span class="win">98.7</span></td><td>75.2</td><td>74.1</td></tr>
+<tr><td>mixed</td><td><span class="win">97.4</span></td><td>74.9</td><td>73.3</td></tr>
+<tr><td>realjob</td><td><span class="win">96.6</span></td><td>81.3</td><td>—</td></tr>
+<tr><td>chitchat</td><td>—</td><td>—</td><td>72.3</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td><span class="win">98.5</span></td><td>76.5</td><td>73.9</td></tr></table>
+<h3>aggregate tok/s（n=4）</h3>
+<table><tr><th>type</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>numeric</td><td><span class="win">274.3</span></td><td>227.2</td><td>221.0</td></tr>
+<tr><td>code</td><td><span class="win">278.0</span></td><td>214.3</td><td>224.1</td></tr>
+<tr><td>prose</td><td><span class="win">264.4</span></td><td>194.4</td><td>228.7</td></tr>
+<tr><td>mixed</td><td><span class="win">277.8</span></td><td>231.8</td><td>204.8</td></tr>
+<tr><td>realjob</td><td><span class="win">137.9</span></td><td>83.6</td><td>124.1</td></tr>
+<tr><td>chitchat</td><td><span class="win">150.8</span></td><td>137.1</td><td>116.4</td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td><span class="win">230.5</span></td><td>181.4</td><td>186.5</td></tr></table>
+<h3>aggregate tok/s（n=8）</h3>
+<table><tr><th>type</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>numeric</td><td>193.4</td><td>235.6</td><td><span class="win">245.3</span></td></tr>
+<tr><td>code</td><td>180.4</td><td><span class="win">213.7</span></td><td>211.6</td></tr>
+<tr><td>prose</td><td>191.2</td><td><span class="win">239.2</span></td><td>225.0</td></tr>
+<tr><td>mixed</td><td>194.6</td><td><span class="win">239.4</span></td><td>194.1</td></tr>
+<tr><td>realjob</td><td>151.5</td><td>159.0</td><td><span class="win">161.8</span></td></tr>
+<tr><td>chitchat</td><td>141.1</td><td>141.6</td><td><span class="win">158.1</span></td></tr>
+<tr style="font-weight:600;background:#eef5ff"><td>平均</td><td>175.4</td><td><span class="win">204.7</span></td><td>199.3</td></tr></table>
+<h3>延遲（全 6 types 中位數）</h3><table><tr><th>指標</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>TTFT p99 (s), n=1</td><td><span class="win">0.099</span></td><td>0.105</td><td>0.180</td></tr>
+<tr><td>TTFT p99 (s), n=8</td><td>5.618</td><td><span class="win">3.579</span></td><td>3.672</td></tr>
+<tr><td>ITL p99 (ms), n=1</td><td><span class="win">10.9</span></td><td>13.9</td><td>14.6</td></tr>
+<tr><td>ITL p99 (ms), n=8</td><td>55.1</td><td>27.6</td><td><span class="win">16.9</span></td></tr>
+</table>
+<h3>ctx — prefill / decode / TTFT（n=1）</h3><table><tr><th>ctx</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>1k prefill tok/s</td><td><span class="win">3,027.8</span></td><td>1,917.7</td><td>2,917.0</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k decode tok/s</td><td><span class="win">98.6</span></td><td>76.7</td><td>74.1</td></tr>
+<tr><td class="muted" style="padding-left:22px">1k TTFT p99 (s)</td><td><span class="win">0.35</span></td><td>0.56</td><td>0.37</td></tr>
+<tr><td>4k prefill tok/s</td><td><span class="win">3,084.9</span></td><td>2,692.1</td><td>2,945.6</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k decode tok/s</td><td><span class="win">99.5</span></td><td>76.2</td><td>75.6</td></tr>
+<tr><td class="muted" style="padding-left:22px">4k TTFT p99 (s)</td><td><span class="win">1.33</span></td><td>1.53</td><td>1.40</td></tr>
+<tr><td>16k prefill tok/s</td><td>2,976.1</td><td><span class="win">3,209.8</span></td><td>2,847.9</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k decode tok/s</td><td><span class="win">96.6</span></td><td>74.2</td><td>73.7</td></tr>
+<tr><td class="muted" style="padding-left:22px">16k TTFT p99 (s)</td><td>5.47</td><td><span class="win">5.07</span></td><td>5.72</td></tr>
+<tr><td>32k prefill tok/s</td><td>2,797.2</td><td><span class="win">3,115.7</span></td><td>2,676.5</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k decode tok/s</td><td><span class="win">93.6</span></td><td>72.9</td><td>73.5</td></tr>
+<tr><td class="muted" style="padding-left:22px">32k TTFT p99 (s)</td><td>11.62</td><td><span class="win">10.43</span></td><td>12.14</td></tr>
+<tr><td>64k prefill tok/s</td><td>2,516.5</td><td><span class="win">2,831.1</span></td><td>2,418.0</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k decode tok/s</td><td><span class="win">93.5</span></td><td>71.8</td><td>69.3</td></tr>
+<tr><td class="muted" style="padding-left:22px">64k TTFT p99 (s)</td><td>25.80</td><td><span class="win">22.94</span></td><td>26.86</td></tr>
+</table>
+<h3>conc — aggregate tok/s（1k prompt）</h3><table><tr><th>n</th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>n=1</td><td><span class="win">48.8</span></td><td>34.3</td><td>36.5</td></tr>
+<tr><td>n=4</td><td><span class="win">76.0</span></td><td>50.6</td><td>57.2</td></tr>
+<tr><td>n=8</td><td><span class="win">69.3</span></td><td>49.2</td><td>57.2</td></tr>
+</table>
+<h3>prefix cache（4k prompt）</h3><table><tr><th></th><th>TP4 no-spec</th><th>TP2×PP2 no-spec</th><th>INT8-TP4 no-spec</th></tr>
+<tr><td>speedup</td><td>2.00x</td><td>1.65x</td><td><span class="win">2.89x</span></td></tr></table>
+<h2>C. 交叉對比</h2>
+<h3>spec 增益（有 spec → 無 spec 的變化；百分比為「無 spec 相對有 spec」）</h3>
+<table><tr><th>指標</th>
+<th>TP4 no-spec vs TP4</th>
+<th>INT8-TP4 no-spec vs INT8-TP4</th>
+</tr>
+<tr><td>decode tok/s n=1（均）</td>
+<td class="lose">164.4 → 98.5 （-40.1%）</td>
+<td class="lose">143.2 → 73.9 （-48.4%）</td>
+</tr>
+<tr><td>aggregate tok/s n=4</td>
+<td class="lose">349.6 → 230.5 （-34.1%）</td>
+<td class="lose">313.9 → 186.5 （-40.6%）</td>
+</tr>
+<tr><td>aggregate tok/s n=8</td>
+<td class="lose">356.2 → 175.4 （-50.8%）</td>
+<td class="lose">328.5 → 199.3 （-39.3%）</td>
+</tr>
+<tr><td>spec acceptance</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</table>
+<h3>P2P 增益（P2P 開 → 關；百分比為「關 P2P 相對開 P2P」的變化）</h3>
+<table><tr><th>指標</th>
+<th>TP4 no-P2P vs TP4</th>
+</tr>
+<tr><td>decode tok/s n=1（均）</td>
+<td class="lose">164.4 → 103.8 （-36.9%）</td>
+</tr>
+<tr><td>aggregate tok/s n=4</td>
+<td class="lose">349.6 → 168.6 （-51.8%）</td>
+</tr>
+<tr><td>aggregate tok/s n=8</td>
+<td class="lose">356.2 → 174.2 （-51.1%）</td>
+</tr>
+<tr><td>spec acceptance</td>
+<td class="lose">0.3 → 0.3 （-2.3%）</td>
+</tr>
+</table>
+<h3>TP2×PP2（no-spec）vs TP4（no-spec）</h3>
+<h3>PP2 vs TP4（同為 no-spec）</h3>
+<table><tr><th>指標</th>
+<th>TP2×PP2 no-spec vs TP4 no-spec</th>
+</tr>
+<tr><td>decode tok/s n=1（均）</td>
+<td class="lose">98.5 → 76.5 （-22.3%）</td>
+</tr>
+<tr><td>aggregate tok/s n=4</td>
+<td class="lose">230.5 → 181.4 （-21.3%）</td>
+</tr>
+<tr><td>aggregate tok/s n=8</td>
+<td class="win">175.4 → 204.7 （+16.8%）</td>
+</tr>
+<tr><td>spec acceptance</td>
+<td>—</td>
+</tr>
+</table>
+</body></html>
