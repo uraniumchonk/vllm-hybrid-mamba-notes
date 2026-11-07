@@ -46,8 +46,8 @@ instance; code, prose and mixed prompts, 2 reps each.
 | Stage | ms per step | Date |
 |---|---|---|
 | vLLM 0.28.0 + backports, drafter on FlashInfer | 27.6–31.0 | 2026-11-03 |
-| vLLM 0.33.0 unpatched | 27.1–27.9 | 2026-11-03 |
-| + E003 | 21.8–22.3 | 2026-11-03 |
+| vLLM 0.33.0 unpatched | 27.10–27.47 | 2026-11-03 |
+| + E003 | 21.77–22.10 | 2026-11-03 |
 | + E005 | 21.0–21.3 | 2026-11-03 |
 | + E006a/b/c | 19.74–19.91 | 2026-11-04 |
 | + CPU governor `performance` | 19.58–19.71 | 2026-11-04 |
