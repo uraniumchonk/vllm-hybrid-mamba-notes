@@ -4,7 +4,7 @@
 > 2026-09-11). The current stack and its numbers are in [README.md](README.md).
 
 Field notes from a working home-lab serving stack.
-Last updated: 2026-08-28 (vLLM 0.28.0 + #54165 + #50885 + LMCache).
+Last updated: 2026-09-11 (written for vLLM 0.28.0 + #54165 + #50885 + LMCache).
 
 This is not an upstream design doc. It is what we measured, what
 broke, and which GitHub issues match. Numbers below are from this
@@ -45,7 +45,7 @@ vLLM 0.27.1 **without LMCache** is clean.
 | Attention backend | FlashInfer |
 | KV connector | `LMCacheMPConnector`, `kv_role=kv_both` |
 
-### Stack that stays up (current)
+### Stack that stays up (as of 2026-08)
 
 | Component | Version | Notes |
 |-----------|---------|--------|
@@ -64,7 +64,7 @@ vLLM 0.27.1 **without LMCache** is clean.
 | `--max-model-len` | 256k | |
 | `--max-num-seqs` | 16 | |
 
-### Stack that stays up with spec decode (new, 2026-08-19)
+### Stack that stays up with spec decode (2026-08-19)
 
 | Component | Version | Notes |
 |-----------|---------|--------|
@@ -99,7 +99,7 @@ acceptance + per-position numbers we trust.
 | `--block-size` / chunk / batched | 1600 / 1600 / 2048 | Force `--mamba-ssm-cache-dtype bfloat16` or block becomes 3200 |
 | `--gpu-memory-utilization` | **0.84** | FULL decode graphs OOM at 0.88 on 2×24 GB + 256k |
 
-**#54165:** `use_eagle()` includes dflash, so 0.28 backs `last_cache_position` by one mamba block and marks every offload group eagle. DFlash must not do that. Retrieve hit → 100% salad (#53505). After the port: retrieve-ON CLEAN; MeowChat 360/360; native offload store non-zero. **#48375 is not sufficient** (short cell only).
+**#54165:** `use_eagle()` includes dflash, so 0.28 backs `last_cache_position` by one mamba block and marks every offload group eagle. DFlash must not do that. Retrieve hit → 100% salad (#53505). After the port: retrieve-ON CLEAN; 3-session chat soak 360/360; native offload store non-zero. **#48375 is not sufficient** (short cell only).
 
 **#50885:** FlashInfer+spec dropped FULL→PIECEWISE on sm_86. typev2 n=1 ITL 29→44 ms; code 246→129. After the port (FULL + PIECEWISE prefill):
 
@@ -397,7 +397,7 @@ acceptance-only run.
 | Acceptance (5-turn run) | 0.50 / 0.886 / 0.518 / 0.857 / 0.886, mean **0.729** |
 | Overall (full run, cumulative counters) | accepted 349 / drafted 644 = **54.2%** |
 | Per-position acceptance (pos 0..6) | 0.75 / 0.63 / 0.58 / 0.55 / 0.49 / 0.43 / 0.36 |
-| Prefix cache hit rate | 101,333 queries / 70,400 hits = **69.5%** |
+| Prefix cache hit rate | 70,400 hits / 101,333 queries = **69.5%** |
 | Prefix tokens served from cache | 70,400 |
 
 Per-position tail (0.36 at pos 6) is the DFlash2 signature: smooth
@@ -413,9 +413,12 @@ validation with real traffic was ongoing at the time of writing.
 
 ---
 
-## 8. What we recommend
+## 8. What we recommend (as of 2026-08)
 
-**Run today**
+Superseded by the current stack in [README.md](README.md). Kept for anyone on
+vLLM 0.25–0.28.
+
+**What we ran in 2026-08**
 
 No-spec production (stable since 2026-08-13):
 
@@ -573,9 +576,44 @@ The trap that costs you P2P silently: a **kernel upgrade** makes dkms
 rebuild the stock module into `updates/dkms/` (higher depmod priority
 than the patched open module under `kernel/drivers/video/`); the stock
 module honors `NVreg_EnableGpuFirmware=0`, GSP goes off, P2P dies — no
-error, vLLM just falls back to PYNCCL. Fix = rebuild the patched open
-modules for the new kernel (see the meowhome-gpu-p2p skill for the exact
-procedure).
+error, vLLM just falls back to PYNCCL. The open module ignores
+`NVreg_EnableGpuFirmware=0`, so GSP stays on and P2P works only while the
+patched open module is the one loaded.
+
+Fix: rebuild the patched open modules for the new kernel. Our modules are
+NVIDIA's open kernel modules with the GeForce P2P patch from
+[tinygrad/open-gpu-kernel-modules](https://github.com/tinygrad/open-gpu-kernel-modules)
+(branches such as `570.133.20-p2p`), ported to driver 610.43.02. The module
+version must match the installed user-space driver.
+
+```bash
+# needs linux-headers for the running kernel
+cd open-gpu-kernel-modules                 # your P2P-patched checkout
+make clean && make modules -j"$(nproc)"
+sudo make modules_install                  # -> /lib/modules/$(uname -r)/kernel/drivers/video/
+# move the stock dkms build out of updates/dkms/, which depmod prefers; keep it for rollback
+mkdir -p ~/nvidia-dkms-backup-"$(uname -r)"
+sudo mv /lib/modules/"$(uname -r)"/updates/dkms/nvidia*.ko* ~/nvidia-dkms-backup-"$(uname -r)"/
+sudo depmod -a "$(uname -r)"
+sudo reboot
+```
+
+After the reboot:
+
+```bash
+grep "Open Kernel Module" /proc/driver/nvidia/version   # present = open module loaded
+nvidia-smi -q | grep "GSP Firmware Version"             # a version number, not N/A
+nvidia-smi topo -p2p r                                   # OK between the GPUs
+```
+
+Then check the vLLM start log: with P2P on two PCIe GPUs the all-reduce
+backends include `CUSTOM`; `Using ['PYNCCL']` alone means P2P is gone. For
+bandwidth, NVIDIA's `p2pBandwidthLatencyTest` from cuda-samples measured
+26.3 GB/s one-way between our cards.
+
+Rollback: move the backed-up `nvidia*.ko*` files back into
+`/lib/modules/$(uname -r)/updates/dkms/`, run `sudo depmod -a "$(uname -r)"`
+and reboot.
 
 Report + tables: [reports/gpu_p2p_vs_host_staging_20260911.html](reports/gpu_p2p_vs_host_staging_20260911.html).
 
