@@ -1,5 +1,8 @@
 # Hybrid Mamba/GDN + MTP + prefix cache + LMCache
 
+> **Historical.** These notes cover vLLM 0.25–0.28 and LMCache 0.5.1–0.5.4 (last updated
+> 2026-09-11). The current stack and its numbers are in [README.md](README.md).
+
 Field notes from a working home-lab serving stack.
 Last updated: 2026-08-28 (vLLM 0.28.0 + #54165 + #50885 + LMCache).
 
