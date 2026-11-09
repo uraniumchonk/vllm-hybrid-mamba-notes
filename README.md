@@ -2,7 +2,7 @@
 
 Qwen3.8-27B-AWQ-INT4 (hybrid Gated DeltaNet) with a DFlash2 drafter on vLLM + LMCache,
 2× RTX 3090, tensor parallel 2. What we run, what we measured, and what broke.
-Last updated 2026-11-07.
+Last updated 2026-11-09.
 
 The patches behind the current stack, with one card per patch and an agent guide for
 porting them, are in
@@ -33,71 +33,57 @@ GPU power limit 250 W
 | DFlash2 BF16 | [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) |
 | DFlash2 W4A16 GPTQ | Quantized from bf16 to W4A16 with our own chat text as calibration data, for acceptance rate. |
 
-## Decode step time
+## Setups compared
 
-![Decode step time per optimization stage](images/step_time_by_stage_20261107.svg)
+**All charts in this section were measured without our engine patches** (E003, E005, E006,
+E014); every run predates them. Re-running them with the patches is on hold because of a
+hardware problem (2026-11-09).
 
-Bars show the fastest run of each stage; the table has the range. Rows are cumulative.
-"No patches" means none of our E-patches; the 0.28.0 row still has the upstream backports
-#54165 and #50885. One step is one speculative round: the drafter proposes 7 tokens and
-the target verifies them. Greedy sampling, 1 request, 300 tokens, LMCache off, on a test
-instance; code, prose and mixed prompts, 2 reps each.
+Qwen3.8-27B on different combinations of quantization, GPU count, PCIe P2P and drafter.
+The charts leave out numeric, a ceiling at about 100% draft acceptance. Output types are
+defined in the [typev2 method](https://github.com/uraniumchonk/llm-engine-qwen-optimization/blob/main/skills/measurement/references/typev2-method.md).
+Full tables are in the reports under [History](#history).
 
-| Stage | ms per step | Date |
-|---|---|---|
-| vLLM 0.28.0 + backports, drafter on FlashInfer | 27.6–31.0 | 2026-11-03 |
-| vLLM 0.33.0 unpatched | 27.10–27.47 | 2026-11-03 |
-| + E003 | 21.77–22.10 | 2026-11-03 |
-| + E005 | 21.0–21.3 | 2026-11-03 |
-| + E006a/b/c | 19.74–19.91 | 2026-11-04 |
-| + CPU governor `performance` | 19.58–19.71 | 2026-11-04 |
-| + FlashInfer PCIe IPC all-reduce (current) | 19.28–19.42 | 2026-11-04 |
-| for reference: vLLM 0.33.0 without speculative decoding | 14.23–14.31 | 2026-11-03 |
+### INT4 vs INT8, TP2 vs TP4
 
-The step without speculation is shorter but yields one token per step.
+![2 vs 4 GPUs, INT4 vs INT8](images/gpus_int4_int8_decode_20261109.svg)
 
-## Tokens per second: 0.28.0 without patches vs 0.33.0 with patches
+![2 vs 4 GPUs, INT4 vs INT8 at 8 streams](images/gpus_int4_int8_8streams_20261109.svg)
 
-![Decode tok/s per stream, 0.28 vs 0.33](images/typev2_toks_028_vs_033_20261107.svg)
+![2 vs 4 GPUs, INT4 vs INT8 on long prompts](images/gpus_int4_int8_prefill_20261109.svg)
 
-Decode tok/s per stream, typev2 suite, 256 max tokens, temperature 0, through the
-production front end with LMCache on.
+vLLM 0.28.0, same machine, 2026-09-16, one run per bar, 256 max tokens, temperature 0.
+2 GPUs is TP2 and 4 GPUs is TP4. INT4 is AWQ-INT4 with DFlash2 K=7; INT8 is W8A16 with
+DFlash2-W8 K=7. Three runs of the two-GPU stack on 2026-09-11 differed by about ±3%.
 
-How the suite is built and read: [typev2 method](https://github.com/uraniumchonk/llm-engine-qwen-optimization/blob/main/skills/measurement/references/typev2-method.md).
-numeric is a ceiling at about 100% draft acceptance. realjob and chitchat use our private
-records and a drafter calibrated on our traffic, so build your own corpus to compare.
+### PCIe P2P
 
-- 0.28.0, no patches: the 2026-08-28 stack, measured 2026-09-11, mean of 3 runs (range in
-  brackets).
-- 0.33.0 + patches: E003/E005/E006 + LMCache 0.5.6 + E014, measured 2026-11-04, 1 run,
-  before the PCIe IPC switch.
+![Host staging vs PCIe P2P, 2 GPUs](images/p2p_vs_host_staging_2gpu_20261109.svg)
 
-| Type | Streams | 0.28.0, no patches (range) | 0.33.0 + patches | Change |
-|---|---|---|---|---|
-| code | 1 | 265.3 (259.6–268.7) | 374.5 | +41% |
-| code | 4 | 176.6 (173.5–180.0) | 192.4 | +9% |
-| numeric | 1 | 290.9 (285.2–293.8) | 413.7 | +42% |
-| numeric | 4 | 215.7 (213.8–218.0) | 247.2 | +15% |
-| mixed | 1 | 97.0 (93.1–101.6) | 137.0 | +41% |
-| mixed | 4 | 76.1 (73.2–79.3) | 84.8 | +11% |
-| prose | 1 | 74.3 (66.0–79.7) | 103.1 | +39% |
-| prose | 4 | 56.3 (54.7–57.3) | 68.1 | +21% |
-| realjob | 1 | 159.1 (142.9–167.6) | 224.0 | +41% |
-| realjob | 4 | 77.9 (72.9–85.1) | 82.9 | +6% |
-| chitchat | 1 | 64.5 (59.3–67.4) | 89.3 | +39% |
-| chitchat | 4 | 62.9 (50.1–88.0) | 98.2 | +56% |
+vLLM 0.28.0, AWQ-INT4, DFlash2-W4A16-GPTQ K=7, typev2, 2× RTX 3090 on a PCIe switch without
+NVLink, 2026-09-11. Means of 2 runs (host staging) and 3 runs (P2P). The realjob ranges
+overlap: 140.9–143.7 and 142.9–167.6 tok/s. Inter-token latency p99, averaged across
+configurations: 103.5 → 76.5 ms.
 
-- realjob and chitchat resend the same conversation history (no anti-cache nonce), as
-  the 2026-09-11 runner did, so the whole prompt can hit the prefix cache.
-- 2026-11-04: inter-token latency p50 19.4–20.3 ms at 1 stream, 29.9–32.2 ms at 4 streams;
-  draft acceptance 3,911 / 12,397 = 0.315.
-- Setting differences on 2026-09-11: gpu-memory-utilization 0.88, max-num-seqs 6,
-  `--mamba-cache-mode align`. Both dates ran at 250 W. The three 2026-09-11 runs differ by
-  about ±3%.
-- Production sampling (temperature 0.7, top_p 0.88, top_k 20), 300 tokens, 1 request:
-  vLLM 0.28.0 on 2026-11-03 code 207.5–209.3, prose 50.4–52.4, mixed 98.2–102.3 tok/s;
-  vLLM 0.33.0 + patches on 2026-11-04 code 266.9–284.2, prose 69.0–72.1, mixed
-  143.0–144.2 tok/s.
+![P2P off vs on, 4 GPUs](images/p2p_prefill_4gpu_20261109.svg)
+
+vLLM 0.28.0, AWQ-INT4, DFlash2 K=7, TP4 on 4× RTX 3090, 2026-09-16, one run per point. P2P
+off is `NCCL_P2P_DISABLE=1` with no custom all-reduce. Decode averaged over the six types
+was 164.4 tok/s with P2P on and 103.8 tok/s with it off.
+
+### Drafters
+
+![No drafter vs DFlash2, 4 GPUs](images/no_drafter_vs_dflash2_4gpu_20261109.svg)
+
+AWQ-INT4 on 4× RTX 3090, vLLM 0.28.0, 2026-09-16, one run per point. The drafter is slower
+on prose. The no-drafter run has no chitchat result.
+
+![MTP vs DSpark vs DFlash2](images/drafters_mtp_dspark_dflash2_20261109.svg)
+
+AWQ-INT4 target, 2× RTX 3090, same prompts, no LMCache. DFlash2 on vLLM 0.27.1
+(2026-08-19), DSpark on 0.27.1 (2026-08-18), MTP on 0.25.1 (2026-08-19). We turned MTP off
+on 2026-08-19 after output corruption when agents switched
+([field notes](FIELD_NOTES.md)).
 
 ## When speculative decoding loses
 
@@ -140,53 +126,6 @@ prefix cache first, so cached tokens come only from LMCache.
 - The same code tree with the same compile cache gives bit-identical greedy logits across
   restarts. A new tree or a fresh cache on the same code path gives a top-20 KL near
   4.5e-4, so compare patches against that floor.
-
-## Setups compared
-
-Qwen3.8-27B on different combinations of quantization, GPU count, PCIe P2P and drafter.
-The charts leave out numeric, a ceiling at about 100% draft acceptance. Full tables are in
-the reports under [History](#history).
-
-### INT4 vs INT8, TP2 vs TP4
-
-![2 vs 4 GPUs, INT4 vs INT8](images/gpus_int4_int8_decode_20261109.svg)
-
-![2 vs 4 GPUs, INT4 vs INT8 at 8 streams](images/gpus_int4_int8_8streams_20261109.svg)
-
-![2 vs 4 GPUs, INT4 vs INT8 on long prompts](images/gpus_int4_int8_prefill_20261109.svg)
-
-vLLM 0.28.0, same machine, 2026-09-16, one run per bar, 256 max tokens, temperature 0.
-2 GPUs is TP2 and 4 GPUs is TP4. INT4 is AWQ-INT4 with DFlash2 K=7; INT8 is W8A16 with
-DFlash2-W8 K=7. Three runs of the two-GPU stack on 2026-09-11 differed by about ±3%.
-
-### PCIe P2P
-
-![Host staging vs PCIe P2P, 2 GPUs](images/p2p_vs_host_staging_2gpu_20261109.svg)
-
-vLLM 0.28.0, AWQ-INT4, DFlash2-W4A16-GPTQ K=7, typev2, 2× RTX 3090 on a PCIe switch without
-NVLink, 2026-09-11. Means of 2 runs (host staging) and 3 runs (P2P). The realjob ranges
-overlap: 140.9–143.7 and 142.9–167.6 tok/s. Inter-token latency p99, averaged across
-configurations: 103.5 → 76.5 ms.
-
-![P2P off vs on, 4 GPUs](images/p2p_prefill_4gpu_20261109.svg)
-
-vLLM 0.28.0, AWQ-INT4, DFlash2 K=7, TP4 on 4× RTX 3090, 2026-09-16, one run per point. P2P
-off is `NCCL_P2P_DISABLE=1` with no custom all-reduce. Decode averaged over the six types
-was 164.4 tok/s with P2P on and 103.8 tok/s with it off.
-
-### Drafters
-
-![No drafter vs DFlash2, 4 GPUs](images/no_drafter_vs_dflash2_4gpu_20261109.svg)
-
-AWQ-INT4 on 4× RTX 3090, vLLM 0.28.0, 2026-09-16, one run per point. The drafter is slower
-on prose. The no-drafter run has no chitchat result.
-
-![MTP vs DSpark vs DFlash2](images/drafters_mtp_dspark_dflash2_20261109.svg)
-
-AWQ-INT4 target, 2× RTX 3090, same prompts, no LMCache. DFlash2 on vLLM 0.27.1
-(2026-08-19), DSpark on 0.27.1 (2026-08-18), MTP on 0.25.1 (2026-08-19). We turned MTP off
-on 2026-08-19 after output corruption when agents switched
-([field notes](FIELD_NOTES.md)).
 
 ## History
 
@@ -239,3 +178,73 @@ LMCacheMPConnector.
 | 0.25.1 | 0.5.1 | off | daily driver without spec |
 
 DSpark drafter: [RadixArk/Qwen3.8-27B-DSpark](https://huggingface.co/RadixArk/Qwen3.8-27B-DSpark) (2026-08-19 comparison).
+
+## Appendix: engine patches
+
+Results of the patches in [llm-engine-qwen-optimization](https://github.com/uraniumchonk/llm-engine-qwen-optimization).
+
+### Decode step time
+
+![Decode step time per optimization stage](images/step_time_by_stage_20261107.svg)
+
+Bars show the fastest run of each stage; the table has the range. Rows are cumulative.
+"No patches" means none of our E-patches; the 0.28.0 row still has the upstream backports
+#54165 and #50885. One step is one speculative round: the drafter proposes 7 tokens and
+the target verifies them. Greedy sampling, 1 request, 300 tokens, LMCache off, on a test
+instance; code, prose and mixed prompts, 2 reps each.
+
+| Stage | ms per step | Date |
+|---|---|---|
+| vLLM 0.28.0 + backports, drafter on FlashInfer | 27.6–31.0 | 2026-11-03 |
+| vLLM 0.33.0 unpatched | 27.10–27.47 | 2026-11-03 |
+| + E003 | 21.77–22.10 | 2026-11-03 |
+| + E005 | 21.0–21.3 | 2026-11-03 |
+| + E006a/b/c | 19.74–19.91 | 2026-11-04 |
+| + CPU governor `performance` | 19.58–19.71 | 2026-11-04 |
+| + FlashInfer PCIe IPC all-reduce (current) | 19.28–19.42 | 2026-11-04 |
+| for reference: vLLM 0.33.0 without speculative decoding | 14.23–14.31 | 2026-11-03 |
+
+The step without speculation is shorter but yields one token per step.
+
+### Tokens per second: 0.28.0 without patches vs 0.33.0 with patches
+
+![Decode tok/s per stream, 0.28 vs 0.33](images/typev2_toks_028_vs_033_20261107.svg)
+
+Decode tok/s per stream, typev2 suite, 256 max tokens, temperature 0, through the
+production front end with LMCache on.
+
+How the suite is built and read: [typev2 method](https://github.com/uraniumchonk/llm-engine-qwen-optimization/blob/main/skills/measurement/references/typev2-method.md).
+numeric is a ceiling at about 100% draft acceptance. realjob and chitchat use our private
+records and a drafter calibrated on our traffic, so build your own corpus to compare.
+
+- 0.28.0, no patches: the 2026-08-28 stack, measured 2026-09-11, mean of 3 runs (range in
+  brackets).
+- 0.33.0 + patches: E003/E005/E006 + LMCache 0.5.6 + E014, measured 2026-11-04, 1 run,
+  before the PCIe IPC switch.
+
+| Type | Streams | 0.28.0, no patches (range) | 0.33.0 + patches | Change |
+|---|---|---|---|---|
+| code | 1 | 265.3 (259.6–268.7) | 374.5 | +41% |
+| code | 4 | 176.6 (173.5–180.0) | 192.4 | +9% |
+| numeric | 1 | 290.9 (285.2–293.8) | 413.7 | +42% |
+| numeric | 4 | 215.7 (213.8–218.0) | 247.2 | +15% |
+| mixed | 1 | 97.0 (93.1–101.6) | 137.0 | +41% |
+| mixed | 4 | 76.1 (73.2–79.3) | 84.8 | +11% |
+| prose | 1 | 74.3 (66.0–79.7) | 103.1 | +39% |
+| prose | 4 | 56.3 (54.7–57.3) | 68.1 | +21% |
+| realjob | 1 | 159.1 (142.9–167.6) | 224.0 | +41% |
+| realjob | 4 | 77.9 (72.9–85.1) | 82.9 | +6% |
+| chitchat | 1 | 64.5 (59.3–67.4) | 89.3 | +39% |
+| chitchat | 4 | 62.9 (50.1–88.0) | 98.2 | +56% |
+
+- realjob and chitchat resend the same conversation history (no anti-cache nonce), as
+  the 2026-09-11 runner did, so the whole prompt can hit the prefix cache.
+- 2026-11-04: inter-token latency p50 19.4–20.3 ms at 1 stream, 29.9–32.2 ms at 4 streams;
+  draft acceptance 3,911 / 12,397 = 0.315.
+- Setting differences on 2026-09-11: gpu-memory-utilization 0.88, max-num-seqs 6,
+  `--mamba-cache-mode align`. Both dates ran at 250 W. The three 2026-09-11 runs differ by
+  about ±3%.
+- Production sampling (temperature 0.7, top_p 0.88, top_k 20), 300 tokens, 1 request:
+  vLLM 0.28.0 on 2026-11-03 code 207.5–209.3, prose 50.4–52.4, mixed 98.2–102.3 tok/s;
+  vLLM 0.33.0 + patches on 2026-11-04 code 266.9–284.2, prose 69.0–72.1, mixed
+  143.0–144.2 tok/s.
