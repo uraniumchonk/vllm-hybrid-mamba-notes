@@ -141,30 +141,25 @@ prefix cache first, so cached tokens come only from LMCache.
   restarts. A new tree or a fresh cache on the same code path gives a top-20 KL near
   4.5e-4, so compare patches against that floor.
 
-## Findings from earlier stacks
+## Setups compared
 
-Measurements from older stacks that still explain how this one behaves. The charts leave
-out numeric, a ceiling at about 100% draft acceptance. Full tables are in the reports
-under [History](#history).
+Qwen3.8-27B on different combinations of quantization, GPU count, PCIe P2P and drafter.
+The charts leave out numeric, a ceiling at about 100% draft acceptance. Full tables are in
+the reports under [History](#history).
 
-### What a drafter buys
+### INT4 vs INT8, TP2 vs TP4
 
-![No drafter vs DFlash2](images/drafter_vs_none_20261109.svg)
+![2 vs 4 GPUs, INT4 vs INT8](images/gpus_int4_int8_decode_20261109.svg)
 
-AWQ-INT4 target, 2× RTX 3090, typev2. No speculative decoding: 2026-08-23; the report
-gives realjob as approximate. DFlash2-W4A16-GPTQ on vLLM 0.28.0: 2026-08-28, with draft
-acceptance code 80.8%, realjob 34.0%, mixed 24.3%, prose 14.5%.
+![2 vs 4 GPUs, INT4 vs INT8 at 8 streams](images/gpus_int4_int8_8streams_20261109.svg)
 
-### Which drafter
+![2 vs 4 GPUs, INT4 vs INT8 on long prompts](images/gpus_int4_int8_prefill_20261109.svg)
 
-![MTP vs DSpark vs DFlash2](images/drafters_mtp_dspark_dflash2_20261109.svg)
+vLLM 0.28.0, same machine, 2026-09-16, one run per bar, 256 max tokens, temperature 0.
+2 GPUs is TP2 and 4 GPUs is TP4. INT4 is AWQ-INT4 with DFlash2 K=7; INT8 is W8A16 with
+DFlash2-W8 K=7. Three runs of the two-GPU stack on 2026-09-11 differed by about ±3%.
 
-AWQ-INT4 target, 2× RTX 3090, same prompts, no LMCache. DFlash2 on vLLM 0.27.1
-(2026-08-19), DSpark on 0.27.1 (2026-08-18), MTP on 0.25.1 (2026-08-19). We turned MTP off
-on 2026-08-19 after output corruption when agents switched
-([field notes](FIELD_NOTES.md)).
-
-### PCIe P2P on two GPUs
+### PCIe P2P
 
 ![Host staging vs PCIe P2P, 2 GPUs](images/p2p_vs_host_staging_2gpu_20261109.svg)
 
@@ -173,21 +168,25 @@ NVLink, 2026-09-11. Means of 2 runs (host staging) and 3 runs (P2P). The realjob
 overlap: 140.9–143.7 and 142.9–167.6 tok/s. Inter-token latency p99, averaged across
 configurations: 103.5 → 76.5 ms.
 
-### PCIe P2P on four GPUs
-
 ![P2P off vs on, 4 GPUs](images/p2p_prefill_4gpu_20261109.svg)
 
 vLLM 0.28.0, AWQ-INT4, DFlash2 K=7, TP4 on 4× RTX 3090, 2026-09-16, one run per point. P2P
 off is `NCCL_P2P_DISABLE=1` with no custom all-reduce. Decode averaged over the six types
 was 164.4 tok/s with P2P on and 103.8 tok/s with it off.
 
-### What four GPUs buy
+### Drafters
 
-![2 GPUs vs 4 GPUs](images/gpu_count_2_vs_4_20261109.svg)
+![No drafter vs DFlash2, 4 GPUs](images/no_drafter_vs_dflash2_4gpu_20261109.svg)
 
-TP2 vs TP4 on the stack above, 2026-09-16, one run per bar. Prefill at 1k context:
-1,881.5 → 2,930.7 tok/s. The three 2026-09-11 runs of the two-GPU stack differed by about
-±3%, which covers part of the decode changes shown here.
+AWQ-INT4 on 4× RTX 3090, vLLM 0.28.0, 2026-09-16, one run per point. The drafter is slower
+on prose. The no-drafter run has no chitchat result.
+
+![MTP vs DSpark vs DFlash2](images/drafters_mtp_dspark_dflash2_20261109.svg)
+
+AWQ-INT4 target, 2× RTX 3090, same prompts, no LMCache. DFlash2 on vLLM 0.27.1
+(2026-08-19), DSpark on 0.27.1 (2026-08-18), MTP on 0.25.1 (2026-08-19). We turned MTP off
+on 2026-08-19 after output corruption when agents switched
+([field notes](FIELD_NOTES.md)).
 
 ## History
 
