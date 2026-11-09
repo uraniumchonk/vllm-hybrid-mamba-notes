@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="254" viewBox="0 0 640 254" role="img" aria-label="P2P off vs on, 4 GPUs">
+<style>
+  .surface { fill: #fcfcfb; }
+  .t1 { fill: #0b0b0b; } .t2 { fill: #52514e; } .t3 { fill: #898781; }
+  .grid { stroke: #e1e0d9; stroke-width: 1; } .base { stroke: #c3c2b7; stroke-width: 1; }
+  .old { fill: #86b6ef; } .new { fill: #1c5cab; } .link { stroke: #c3c2b7; stroke-width: 2; stroke-linecap: round; }
+  .s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+  .ring { stroke: #fcfcfb; stroke-width: 2; }
+  text { font-family: -apple-system, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .t1 { fill: #f0efec; } .t2 { fill: #c3c2b7; } .t3 { fill: #898781; }
+    .grid { stroke: #2c2c2a; } .base { stroke: #383835; }
+    .old { fill: #184f95; } .new { fill: #6da7ec; } .link { stroke: #383835; }
+    .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+    .ring { stroke: #1a1a19; }
+  }
+</style><title>P2P off vs on, 4 GPUs</title><rect class="surface" width="640" height="254" rx="8"/><text x="24.0" y="34.0" class="t1" font-size="17" text-anchor="start" font-weight="600">P2P off vs on, 4 GPUs</text><text x="24.0" y="56.0" class="t2" font-size="13" text-anchor="start">Prefill tok/s, one stream</text><circle cx="28" cy="78" r="5" class="old"/><text x="39.0" y="82.0" class="t2" font-size="13" text-anchor="start">P2P off</text><circle cx="116.80000000000001" cy="78" r="5" class="new"/><text x="127.8" y="82.0" class="t2" font-size="13" text-anchor="start">P2P on</text><line x1="112.0" y1="104" x2="112.0" y2="218" class="base"/><text x="112.0" y="235.0" class="t3" font-size="11" text-anchor="middle">0</text><line x1="260.2" y1="104" x2="260.2" y2="218" class="grid"/><text x="260.2" y="235.0" class="t3" font-size="11" text-anchor="middle">1,000</text><line x1="408.5" y1="104" x2="408.5" y2="218" class="grid"/><text x="408.5" y="235.0" class="t3" font-size="11" text-anchor="middle">2,000</text><line x1="556.7" y1="104" x2="556.7" y2="218" class="grid"/><text x="556.7" y="235.0" class="t3" font-size="11" text-anchor="middle">3,000</text><text x="100.0" y="127.5" class="t1" font-size="13" text-anchor="end">1k context</text><line x1="235.1" y1="123.0" x2="546.4" y2="123.0" class="link"/><circle cx="235.1" cy="123.0" r="6.5" class="old ring"/><circle cx="546.4" cy="123.0" r="6.5" class="new ring"/><text x="224.1" y="127.0" class="t2" font-size="12" text-anchor="end">830</text><text x="557.4" y="127.0" class="t1" font-size="12" text-anchor="start" font-weight="600">2,931</text><text x="100.0" y="165.5" class="t1" font-size="13" text-anchor="end">16k context</text><line x1="234.0" y1="161.0" x2="539.6" y2="161.0" class="link"/><circle cx="234.0" cy="161.0" r="6.5" class="old ring"/><circle cx="539.6" cy="161.0" r="6.5" class="new ring"/><text x="223.0" y="165.0" class="t2" font-size="12" text-anchor="end">823</text><text x="550.6" y="165.0" class="t1" font-size="12" text-anchor="start" font-weight="600">2,885</text><text x="100.0" y="203.5" class="t1" font-size="13" text-anchor="end">64k context</text><line x1="229.2" y1="199.0" x2="472.3" y2="199.0" class="link"/><circle cx="229.2" cy="199.0" r="6.5" class="old ring"/><circle cx="472.3" cy="199.0" r="6.5" class="new ring"/><text x="218.2" y="203.0" class="t2" font-size="12" text-anchor="end">791</text><text x="483.3" y="203.0" class="t1" font-size="12" text-anchor="start" font-weight="600">2,430</text></svg>
