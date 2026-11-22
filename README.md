@@ -2,24 +2,29 @@
 
 Qwen3.8-27B-AWQ-INT4 (hybrid Gated DeltaNet) with a DFlash2 drafter on vLLM + LMCache,
 2× RTX 3090, tensor parallel 2. What we run, what we measured, and what broke.
-Last updated 2026-11-09.
+Last updated 2026-11-22.
 
 The patches behind the current stack, with one card per patch and an agent guide for
 porting them, are in
 [llm-engine-qwen-optimization](https://github.com/uraniumchonk/llm-engine-qwen-optimization).
 This repo holds the detailed numbers and the history.
 
-## Current stack (since 2026-11-04)
+## Current stack (since 2026-11-14)
 
 ```
 vLLM 0.33.0 (torch 2.14 + CUDA 13)
   + E003  Triton reads fp8 KV on sm86, drafter on TRITON_ATTN   VLLM_TRITON_FP8_SW_DEQUANT=1
   + E005  hybrid KV group size 16                               VLLM_KV_GROUP_SIZE=16
   + E006  small-M GEMM for GDN in_proj_ba during spec decode    on when applied
+  + E031  64-token prefix-cache hits + CoW block-copy fix       VLLM_E031_SWA_FINE_HITS=1
   all-reduce: FlashInfer PCIe IPC                               VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1
+  fastokens 0.2.1                                               VLLM_USE_FASTOKENS=1
 LMCache 0.5.6 built from sdist against torch 2.14
   multiprocess server, --engine-type default --separate-object-groups --chunk-size 1600
   + E014  GDN / drafter state stored only at checkpoint chunks  LMCACHE_MEOW_CKPT_K=4
+  + E030  L2 index kept in step with the files on disk          LMCACHE_MEOW_L2_SYNC=1
+  + E033  local-skip lookup + lookup wait budget                LMCACHE_MEOW_LOCAL_SKIP=1, LMCACHE_MEOW_LOOKUP_WAIT_MS=5
+  + E034  synchronous L1 eviction with reserve fallback         LMCACHE_MEOW_SYNC_EVICT=1, LMCACHE_MEOW_RESERVE_FALLBACK=1
 target   Qwen3.8-27B-AWQ-INT4, --attention-backend FLASHINFER, --kv-cache-dtype fp8
 spec     DFlash2-W4A16-GPTQ, method=dflash, 7 speculative tokens, attention_backend=TRITON_ATTN
 block-size 1600 / max-num-batched-tokens 2048 / max-num-seqs 4 / max-model-len 256k
@@ -134,7 +139,8 @@ the linked files.
 
 | Date | Stack | Where |
 |---|---|---|
-| 2026-11-04 → | vLLM 0.33.0 + E003/E005/E006, LMCache 0.5.6 + E014, TP2 | this README |
+| 2026-11-14 → | vLLM 0.33.0 + E003/E005/E006/E031, LMCache 0.5.6 + E014/E030/E033/E034, TP2 | this README |
+| 2026-11-04 → 2026-11-13 | vLLM 0.33.0 + E003/E005/E006, LMCache 0.5.6 + E014, TP2 | [patch cards](https://github.com/uraniumchonk/llm-engine-qwen-optimization) |
 | 2026-09-16 | INT8 W8A16 on 4× RTX 3090 TP4, DFlash2-W8, 262K context; NCCL symmetric-memory A/B | [INT8 TP4 suite](reports/qwen38_int8_tp4_suite_20260916.html) ([preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_int8_tp4_suite_20260916.html)), [4-card 3-model comparison](reports/4card_3model_20260916.html), [symm-mem A/B](reports/symm_ab_20260916.md) |
 | 2026-09-11 | PCIe P2P vs host staging: +22% decode on 2× RTX 3090 TP2 | [report](reports/gpu_p2p_vs_host_staging_20260911.html) ([preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/gpu_p2p_vs_host_staging_20260911.html)), [FIELD_NOTES §11](FIELD_NOTES.md#11-pcie-p2p-vs-host-staging-smh--measured-22-decode-2026-09-11) |
 | 2026-08-28 | vLLM 0.28.0 + #54165 + #50885 + `_dense_kv_rows()`, LMCache 0.5.4rc5, DFlash2 K=7 | [report](reports/qwen38_0280_dflash2_lmcache_20260828.html) ([preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_0280_dflash2_lmcache_20260828.html)), section below |
