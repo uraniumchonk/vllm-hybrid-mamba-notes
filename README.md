@@ -39,10 +39,14 @@ LMCache 0.5.6 built from sdist against torch 2.14
 target   Qwen3.8-27B-AWQ-INT4, --attention-backend FLASHINFER, --kv-cache-dtype fp8
 spec     DFlash2-W4A16-GPTQ, method=dflash, 7 speculative tokens, attention_backend=TRITON_ATTN
 block-size 1600 / max-num-batched-tokens 2048 / max-num-seqs 4 / max-model-len 256k
-gpu-memory-utilization 0.86 / prefix caching on / cudagraph_mode FULL_AND_PIECEWISE
-GPU power limit 300 W, CPU Ryzen 9 5900X
+gpu-memory-utilization 0.86 / prefix caching on / --prefix-match-unit 64 (E031, since 2026-11-13)
+cudagraph_mode FULL_AND_PIECEWISE
+GPU0/1 power limit 300 W, CPU Ryzen 9 5900X
 (every measurement dated before 2026-11-17: 250 W and a Ryzen 5 5600)
 ```
+
+The ten switches added for v2 are the E042–E053 lines above (E053 is two variables) plus
+`VLLM_GDN_DECODE_KERNEL=triton`. PCIe IPC all-reduce was already a live flag on 2026-11-28.
 
 | Role | Repo |
 |------|------|
@@ -53,8 +57,11 @@ GPU power limit 300 W, CPU Ryzen 9 5900X
 ## Setups compared
 
 **All charts in this section were measured without our engine patches** (E003, E005, E006,
-E014); every run predates them. Re-running them with the patches is on hold because of a
-hardware problem (2026-11-09).
+E014); every run predates them.
+
+2026-11-28: these INT4/INT8, TP4, and P2P charts were not re-run. The same day, on the
+current hardware (Ryzen 9 5900X, GPU0/1 at a 300 W limit), the unpatched vLLM 0.33.0 wheel
+was compared with patch set v2. That comparison is in the appendix below.
 
 Qwen3.8-27B on different combinations of quantization, GPU count, PCIe P2P and drafter.
 The charts leave out numeric, a ceiling at about 100% draft acceptance. Output types are
@@ -109,6 +116,10 @@ vs 70.4 without; 4 streams 168.5 tok/s with DFlash2 vs 240.8 without (aggregate)
 
 ## LMCache on the current stack
 
+2026-11-28: the rows below were measured on 2026-11-04, before E030, E033, E034, and before
+patch set v2. LMCache in v2 is still 0.5.6 with E014, E030, E033, and E034. kv_probe was
+not run on v2.
+
 Measured 2026-11-04 on a test server with the production flags; requests reset the vLLM
 prefix cache first, so cached tokens come only from LMCache.
 
@@ -143,6 +154,9 @@ prefix cache first, so cached tokens come only from LMCache.
 - The same code tree with the same compile cache gives bit-identical greedy logits across
   restarts. A new tree or a fresh cache on the same code path gives a top-20 KL near
   4.5e-4, so compare patches against that floor.
+- 2026-11-28: the same v1 build on the live instance and on the test instance was not
+  bitwise identical (973 greedy tokens, top-1 agreement 99.38%, KL 4.52e-4, step 18.08 ms
+  vs 18.27 ms). Cause not examined. Compare two versions on one kind of instance.
 
 ## History
 
@@ -151,7 +165,8 @@ the linked files.
 
 | Date | Stack | Where |
 |---|---|---|
-| 2026-11-14 → | vLLM 0.33.0 + E003/E005/E006/E031, LMCache 0.5.6 + E014/E030/E033/E034, TP2 | this README |
+| 2026-11-28 → | vLLM 0.33.0 patch set v2 (v1 plus E042–E047, E052, E053) and the ten switches, LMCache 0.5.6 + E014/E030/E033/E034, TP2 | this README, Current stack |
+| 2026-11-14 → 2026-11-28 | vLLM 0.33.0 + E003/E005/E006/E031, LMCache 0.5.6 + E014/E030/E033/E034, TP2 | this README |
 | 2026-11-04 → 2026-11-13 | vLLM 0.33.0 + E003/E005/E006, LMCache 0.5.6 + E014, TP2 | [patch cards](https://github.com/uraniumchonk/llm-engine-qwen-optimization) |
 | 2026-09-16 | INT8 W8A16 on 4× RTX 3090 TP4, DFlash2-W8, 262K context; NCCL symmetric-memory A/B | [INT8 TP4 suite](reports/qwen38_int8_tp4_suite_20260916.html) ([preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/qwen38_int8_tp4_suite_20260916.html)), [4-card 3-model comparison](reports/4card_3model_20260916.html), [symm-mem A/B](reports/symm_ab_20260916.md) |
 | 2026-09-11 | PCIe P2P vs host staging: +22% decode on 2× RTX 3090 TP2 | [report](reports/gpu_p2p_vs_host_staging_20260911.html) ([preview](https://htmlpreview.github.io/?https://raw.githubusercontent.com/uraniumchonk/vllm-hybrid-mamba-notes/main/reports/gpu_p2p_vs_host_staging_20260911.html)), [FIELD_NOTES §11](FIELD_NOTES.md#11-pcie-p2p-vs-host-staging-smh--measured-22-decode-2026-09-11) |
@@ -218,6 +233,11 @@ and mixed prompts, 2 reps each. All rows measured 2026-11-28 on the current hard
 | + E042–E047 and upstream's Triton GDN decode kernel | 16.78–16.89 | 3 |
 | + E052, E053 = patch set v2 (current) | 15.81–15.84 | 6 |
 
+Each range is the minimum and maximum wall step time of those runs. The chart's 25.1 ms
+and 15.8 ms are the fastest run of the first and last rows, shown to 0.1 ms. The
+steps-weighted mean of the six runs is 25.42 ms unpatched, 18.27 ms for v1, and 15.83 ms
+for v2. v1's repeat arm in the same window was 18.25–18.31 ms, steps-weighted 18.27 ms.
+
 The third row comes from an earlier window of the same day, in which v1 read 18.33–18.36
 and v2 15.80–15.82 ms.
 
@@ -231,23 +251,32 @@ With a long context (one decode request per context, same day), ms per step:
 
 What v2 costs, what it leaves unchanged, and what is open:
 
-- Output is not bitwise identical to v1: top-20 decode logit KL 4.4e-4 to 4.7e-4, top-1
-  agreement 99.45% to 99.56% (915 and 1,125 greedy tokens). The same tree with a fresh
-  compile cache reads about 4.5e-4.
-- KV pool: 393,229 tokens without patches, 486,666 with v1, 466,666 with v2. E044's
-  quantized lm_head copy for the drafter takes GPU memory.
+- Output is not bitwise identical to v1: top-20 decode logit KL 4.71e-4 over 1,125 greedy
+  tokens (top-1 agreement 99.56%, test instance) and 4.42e-4 over 915 tokens (99.45%, live
+  instance). The same tree with a fresh compile cache reads about 4.5e-4.
+- KV pool: 393,229 tokens without patches, 486,666 with v1, 466,666 with v2 (20,000 below
+  v1). E044's own A/B read 489,333 → 470,666 (−18,667); the other switches were not split out.
 - Prefill is unchanged: cold prefill at 16K / 64K / 128K runs at 2,748 / 2,166 / 1,888
   tokens per second without patches and 2,764 / 2,174 / 1,885 with v2.
 - First token after a prefix hit, 50 new tokens on a 16K / 64K / 128K context: 166 / 940 /
   562 ms without patches (hits end on a 1,600-token block, so 262 / 1,469 / 408 tokens are
   computed again), 127 / 114 / 223 ms with v1, 83 / 106 / 197 ms with v2.
 - Open: 4 requests of 62K tokens asked twice, LMCache off. In the second round the engine
-  without patches and v1 served all four from the prefix cache (3.0 and 2.5 s for the
-  round); v2 computed one of the four again in the one run we have (28.3 s). Cause not
-  examined. With LMCache attached, v2's second round took 2.2 s.
-- Open: 4 concurrent cold prompts of 1K to 16K tokens. The mean prefill rate per request
-  is lower with v1 and v2 than without patches (4K: 1,219 and 1,218 vs 1,483 tokens per
-  second) while the last request's first-token time is equal. Cause not examined.
+  without patches and v1 served all four from the prefix cache (decode wall 2.97 s and
+  2.46 s); v2 computed one of the four again in the one run we have (decode wall 28.3 s).
+  Cause not examined. With a test LMCache attached, v2's second round took 2.20 s.
+- Open: 4 concurrent cold prompts of 1K to 16K tokens, test instance, LMCache off. Mean
+  prefill tok/s at 4K is 1,483.1 without patches and 1,218.1 with v2. The last request's
+  first-token time in that cell is 5.836 s and 5.785 s. The run record also places v1 at
+  1,219 beside those two. The 4K × 4 v1 reading on the live instance, LMCache on, is
+  1,218.9 tok/s, a different instance from the pair above. Cause not examined.
+- E041 is not in v2. kv_probe was not run on v2. More than 4 concurrent requests and
+  preemption were not measured.
+- 2026-11-28 method: one test instance, LMCache off, frozen prompts, quiet machine. A
+  4-request short-prompt step time is four copies of one prompt. Mixed
+  prompts are a batch tok/s, not an engine step. The long-context 4-request cold wall
+  mixes later prefills into the clock and is not a decode step. Unit groups E042, E043,
+  E044, E047, E052, and E053 passed on the v2 tree (6 of 6).
 
 #### Earlier: 2026-11-03/04 on the previous hardware
 
@@ -303,6 +332,8 @@ records and a drafter calibrated on our traffic, so build your own corpus to com
 
 - "No patches" is the PyPI wheel with upstream defaults: drafter attention on FlashInfer,
   prefix hits on whole 1,600-token blocks, no PCIe IPC all-reduce, no fastokens.
+- The percent column and the chart labels are decode tok/s per stream. +29–44% at 4 streams
+  is that per-stream range. +18–41% below is aggregate tok/s of the whole 4-stream batch.
 - The two realjob readings at 4 streams are far apart on both sides.
 - Tokens per second of the whole 4-stream batch, time to first token included: numeric
   847 → 1,088, code 571 → 670, prose 214 → 286, mixed 324 → 420, realjob 187 → 252,
