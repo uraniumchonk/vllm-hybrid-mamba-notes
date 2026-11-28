@@ -41,8 +41,9 @@ spec     DFlash2-W4A16-GPTQ, method=dflash, 7 speculative tokens, attention_back
 block-size 1600 / max-num-batched-tokens 2048 / max-num-seqs 4 / max-model-len 256k
 gpu-memory-utilization 0.86 / prefix caching on / --prefix-match-unit 64 (E031, since 2026-11-13)
 cudagraph_mode FULL_AND_PIECEWISE
-GPU0/1 power limit 300 W, CPU Ryzen 9 5900X
-(every measurement dated before 2026-11-17: 250 W and a Ryzen 5 5600)
+GPU0/1 power limit 300 W, half-rate tensor mode unlocked (gpu-unlock module, continuously
+since 2026-11-21), CPU Ryzen 9 5900X
+(every measurement dated before 2026-11-17: 250 W, locked, and a Ryzen 5 5600)
 ```
 
 The ten switches added for v2 are the E042–E053 lines above (E053 is two variables) plus
@@ -224,7 +225,8 @@ Bars show the fastest run of each stage; the table has the range. Rows are cumul
 One step is one speculative round: the drafter proposes 7 tokens and the target verifies
 them. Greedy sampling, 1 request, 300 tokens, LMCache off, on a test instance; code, prose
 and mixed prompts, 2 reps each. All rows measured 2026-11-28 on the current hardware
-(Ryzen 9 5900X, both GPUs at a 300 W limit, CPU governor `schedutil`).
+(Ryzen 9 5900X, both GPUs at a 300 W limit and unlocked by gpu-unlock, CPU governor
+`schedutil`).
 
 | Stage | ms per step | Runs |
 |---|---|---|
