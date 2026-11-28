@@ -2,14 +2,14 @@
 
 Qwen3.8-27B-AWQ-INT4 (hybrid Gated DeltaNet) with a DFlash2 drafter on vLLM + LMCache,
 2× RTX 3090, tensor parallel 2. What we run, what we measured, and what broke.
-Last updated 2026-11-22.
+Last updated 2026-11-28.
 
 The patches behind the current stack, with one card per patch and an agent guide for
 porting them, are in
 [llm-engine-qwen-optimization](https://github.com/uraniumchonk/llm-engine-qwen-optimization).
 This repo holds the detailed numbers and the history.
 
-## Current stack (since 2026-11-14)
+## Current stack (patch set v2, since 2026-11-28)
 
 ```
 vLLM 0.33.0 (torch 2.14 + CUDA 13)
@@ -17,6 +17,17 @@ vLLM 0.33.0 (torch 2.14 + CUDA 13)
   + E005  hybrid KV group size 16                               VLLM_KV_GROUP_SIZE=16
   + E006  small-M GEMM for GDN in_proj_ba during spec decode    on when applied
   + E031  64-token prefix-cache hits + CoW block-copy fix       VLLM_E031_SWA_FINE_HITS=1
+  patch set v2 adds, 2026-11-28:
+  + E042  drafter sliding-window attention on Triton's 3D path  VLLM_TRITON_SWA_3D=1
+  + E043  small-M GEMM in one wave with a fused reduce          VLLM_E006_FAST=1
+  + E044  NVFP4 copy of the lm_head for the drafter             VLLM_DFLASH_LM_HEAD_QUANT=nvfp4
+  + E045  draft tokens by local argmax on each TP rank          VLLM_DFLASH_LOCAL_ARGMAX=1
+  + E046  text-only steps skip the multimodal embedding merge   VLLM_FAST_TEXT_EMBEDS=1
+  + E047  short prefill steps run GDN on one recurrent kernel   VLLM_GDN_SHORT_PREFILL_MAX=256
+  + E052  target attention plan without the per-step GPU wait   VLLM_E052_PLAN_NO_WAIT=1
+  + E053  whole-column Marlin launch for small batches          VLLM_MEOW_MARLIN_WC=1, VLLM_MEOW_MARLIN_LIB=<meow_wc.so>
+  upstream switches:
+  GDN decode kernel: Triton                                     VLLM_GDN_DECODE_KERNEL=triton
   all-reduce: FlashInfer PCIe IPC                               VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1
   fastokens 0.2.1                                               VLLM_USE_FASTOKENS=1
 LMCache 0.5.6 built from sdist against torch 2.14
@@ -29,7 +40,8 @@ target   Qwen3.8-27B-AWQ-INT4, --attention-backend FLASHINFER, --kv-cache-dtype 
 spec     DFlash2-W4A16-GPTQ, method=dflash, 7 speculative tokens, attention_backend=TRITON_ATTN
 block-size 1600 / max-num-batched-tokens 2048 / max-num-seqs 4 / max-model-len 256k
 gpu-memory-utilization 0.86 / prefix caching on / cudagraph_mode FULL_AND_PIECEWISE
-GPU power limit 250 W
+GPU power limit 300 W, CPU Ryzen 9 5900X
+(every measurement dated before 2026-11-17: 250 W and a Ryzen 5 5600)
 ```
 
 | Role | Repo |
@@ -191,8 +203,58 @@ Results of the patches in [llm-engine-qwen-optimization](https://github.com/uran
 
 ### Decode step time
 
+![Decode step time per stage, 25.1 to 15.8 ms](images/step_time_by_stage_20261128.svg)
+
+Bars show the fastest run of each stage; the table has the range. Rows are cumulative.
+One step is one speculative round: the drafter proposes 7 tokens and the target verifies
+them. Greedy sampling, 1 request, 300 tokens, LMCache off, on a test instance; code, prose
+and mixed prompts, 2 reps each. All rows measured 2026-11-28 on the current hardware
+(Ryzen 9 5900X, both GPUs at a 300 W limit, CPU governor `schedutil`).
+
+| Stage | ms per step | Runs |
+|---|---|---|
+| vLLM 0.33.0, no patches, upstream defaults (drafter attention on FlashInfer) | 25.11–26.03 | 6 |
+| + patch set v1: E003, E005, E006a/b/c, E031, FlashInfer PCIe IPC all-reduce | 18.25–18.29 | 6 |
+| + E042–E047 and upstream's Triton GDN decode kernel | 16.78–16.89 | 3 |
+| + E052, E053 = patch set v2 (current) | 15.81–15.84 | 6 |
+
+The third row comes from an earlier window of the same day, in which v1 read 18.33–18.36
+and v2 15.80–15.82 ms.
+
+With a long context (one decode request per context, same day), ms per step:
+
+| Context | No patches | v1 | v2 |
+|---|---|---|---|
+| 16K | 26.01 | 19.47 | 16.56 |
+| 64K | 27.92 | 20.98 | 18.09 |
+| 128K | 29.11 | 22.95 | 20.10 |
+
+What v2 costs, what it leaves unchanged, and what is open:
+
+- Output is not bitwise identical to v1: top-20 decode logit KL 4.4e-4 to 4.7e-4, top-1
+  agreement 99.45% to 99.56% (915 and 1,125 greedy tokens). The same tree with a fresh
+  compile cache reads about 4.5e-4.
+- KV pool: 393,229 tokens without patches, 486,666 with v1, 466,666 with v2. E044's
+  quantized lm_head copy for the drafter takes GPU memory.
+- Prefill is unchanged: cold prefill at 16K / 64K / 128K runs at 2,748 / 2,166 / 1,888
+  tokens per second without patches and 2,764 / 2,174 / 1,885 with v2.
+- First token after a prefix hit, 50 new tokens on a 16K / 64K / 128K context: 166 / 940 /
+  562 ms without patches (hits end on a 1,600-token block, so 262 / 1,469 / 408 tokens are
+  computed again), 127 / 114 / 223 ms with v1, 83 / 106 / 197 ms with v2.
+- Open: 4 requests of 62K tokens asked twice, LMCache off. In the second round the engine
+  without patches and v1 served all four from the prefix cache (3.0 and 2.5 s for the
+  round); v2 computed one of the four again in the one run we have (28.3 s). Cause not
+  examined. With LMCache attached, v2's second round took 2.2 s.
+- Open: 4 concurrent cold prompts of 1K to 16K tokens. The mean prefill rate per request
+  is lower with v1 and v2 than without patches (4K: 1,219 and 1,218 vs 1,483 tokens per
+  second) while the last request's first-token time is equal. Cause not examined.
+
+#### Earlier: 2026-11-03/04 on the previous hardware
+
 ![Decode step time per optimization stage](images/step_time_by_stage_20261107.svg)
 
+Measured with a Ryzen 5 5600 and both GPUs at a 250 W limit. The same unpatched 0.33.0 read
+27.10–27.47 ms then and 25.11–26.03 ms on 2026-11-28.
 Bars show the fastest run of each stage; the table has the range. Rows are cumulative.
 "No patches" means none of our E-patches; the 0.28.0 row still has the upstream backports
 #54165 and #50885. One step is one speculative round: the drafter proposes 7 tokens and
@@ -207,12 +269,49 @@ instance; code, prose and mixed prompts, 2 reps each.
 | + E005 | 21.0–21.3 | 2026-11-03 |
 | + E006a/b/c | 19.74–19.91 | 2026-11-04 |
 | + CPU governor `performance` | 19.58–19.71 | 2026-11-04 |
-| + FlashInfer PCIe IPC all-reduce (current) | 19.28–19.42 | 2026-11-04 |
+| + FlashInfer PCIe IPC all-reduce (patch set v1) | 19.28–19.42 | 2026-11-04 |
 | for reference: vLLM 0.33.0 without speculative decoding | 14.23–14.31 | 2026-11-03 |
 
 The step without speculation is shorter but yields one token per step.
 
-### Tokens per second: 0.28.0 without patches vs 0.33.0 with patches
+### Tokens per second: 0.33.0 without patches vs 0.33.0 with patches
+
+![Decode tok/s per stream, 0.33.0 without patches vs 0.33.0 with patches (v2)](images/typev2_toks_033_nopatch_vs_v2_20261128.svg)
+
+Decode tok/s per stream, typev2 suite, 256 max tokens, temperature 0, sent straight to a
+test instance with LMCache off. Both sides measured 2026-11-28 on the same hardware, 2
+repeats each; the table has the mean and the two readings.
+
+How the suite is built and read: [typev2 method](https://github.com/uraniumchonk/llm-engine-qwen-optimization/blob/main/skills/measurement/references/typev2-method.md).
+numeric is a ceiling at about 100% draft acceptance. realjob and chitchat use our private
+records and a drafter calibrated on our traffic, so build your own corpus to compare.
+
+| Type | Streams | 0.33.0, no patches (readings) | 0.33.0 + patches v2 (readings) | Change |
+|---|---|---|---|---|
+| code | 1 | 269.4 (257.3, 281.4) | 434.4 (410.6, 458.1) | +61% |
+| code | 4 | 228.6 (226.7, 230.4) | 294.9 (290.2, 299.5) | +29% |
+| numeric | 1 | 312.1 (307.7, 316.6) | 507.4 (507.2, 507.6) | +63% |
+| numeric | 4 | 262.3 (261.3, 263.3) | 351.1 (348.1, 354.2) | +34% |
+| mixed | 1 | 105.1 (102.7, 107.4) | 164.7 (163.0, 166.4) | +57% |
+| mixed | 4 | 92.7 (91.8, 93.5) | 122.5 (121.1, 124.0) | +32% |
+| prose | 1 | 78.3 (72.1, 84.6) | 129.6 (126.8, 132.3) | +65% |
+| prose | 4 | 69.2 (68.7, 69.8) | 90.8 (89.7, 91.8) | +31% |
+| realjob | 1 | 177.2 (175.4, 178.9) | 281.6 (281.5, 281.6) | +59% |
+| realjob | 4 | 101.3 (87.0, 115.6) | 146.3 (118.3, 174.3) | +44% |
+| chitchat | 1 | 65.8 (61.3, 70.2) | 106.2 (99.2, 113.2) | +62% |
+| chitchat | 4 | 60.7 (59.0, 62.4) | 83.5 (82.0, 84.9) | +37% |
+
+- "No patches" is the PyPI wheel with upstream defaults: drafter attention on FlashInfer,
+  prefix hits on whole 1,600-token blocks, no PCIe IPC all-reduce, no fastokens.
+- The two realjob readings at 4 streams are far apart on both sides.
+- Tokens per second of the whole 4-stream batch, time to first token included: numeric
+  847 → 1,088, code 571 → 670, prose 214 → 286, mixed 324 → 420, realjob 187 → 252,
+  chitchat 144 → 203 (+18% to +41%).
+- v1 → v2 through the production front end with LMCache on, 1 stream, same day: numeric
+  440.5 → 506.1, code 360.5 → 441.4, mixed 153.6 → 174.6, prose 115.3 → 121.6, realjob
+  242.4 → 281.2, chitchat 84.3 → 110.0.
+
+#### Earlier: 0.28.0 without patches vs 0.33.0 with patches (2026-11-04, previous hardware)
 
 ![Decode tok/s per stream, 0.28 vs 0.33](images/typev2_toks_028_vs_033_20261107.svg)
 
