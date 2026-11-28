@@ -235,8 +235,8 @@ and mixed prompts, 2 reps each. All rows measured 2026-11-28 on the current hard
 
 Each range is the minimum and maximum wall step time of those runs. The chart's 25.1 ms
 and 15.8 ms are the fastest run of the first and last rows, shown to 0.1 ms. The
-steps-weighted mean of the six runs is 25.42 ms unpatched, 18.27 ms for v1, and 15.83 ms
-for v2. v1's repeat arm in the same window was 18.25–18.31 ms, steps-weighted 18.27 ms.
+median of the six runs is 25.42 ms unpatched, 18.27 ms for v1, and 15.83 ms
+for v2. v1's repeat arm in the same window was 18.25–18.31 ms, median 18.27 ms.
 
 The third row comes from an earlier window of the same day, in which v1 read 18.33–18.36
 and v2 15.80–15.82 ms.
