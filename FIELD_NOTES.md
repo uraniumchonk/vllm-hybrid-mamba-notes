@@ -6,9 +6,15 @@
 Field notes from a working home-lab serving stack.
 Last updated: 2026-09-11 (written for vLLM 0.28.0 + #54165 + #50885 + LMCache).
 
+2026-11-28: production is vLLM 0.33.0 patch set v2 (v1's E003, E005, E006a/b/c, E031,
+plus E042–E047, E052, E053, and the ten switches) with LMCache 0.5.6 (E014, E030, E033,
+E034), since 17:14 that day. Hardware since 2026-11-17 is a Ryzen 9 5900X with GPU0/1 at
+a 300 W limit. Measurements in this file are from the earlier machine (Ryzen 5 5600,
+GPUs at 250 W) unless a line gives another date. The two periods are not a software comparison.
+
 This is not an upstream design doc. It is what we measured, what
-broke, and which GitHub issues match. Numbers below are from this
-machine unless marked otherwise.
+broke, and which GitHub issues match. Numbers below are from the
+machine of that date unless marked otherwise.
 
 **One-line rule (old):** MTP + prefix-cache hit + LMCache on a hybrid
 Mamba/GDN model is the perfect storm. It looks fast until a later
@@ -151,6 +157,9 @@ Do not hold #4253 for the leftover retrieve bug.
 | `mamba-cache-mode=align` | Snapshot recurrent state only at block boundaries | Required for GDN + prefix cache / LMCache |
 | `mamba-cache-mode=all` | Snapshot every `i * block_size` | Not the LMCache-validated combo; DSpark+MRv2 also crashes here |
 | `--prefix-match-unit N` | Finer-than-block hits (0.27.x) | We saw occasional misalignment with LMCache and removed it |
+
+2026-11-13, vLLM 0.33.0: production sets `--prefix-match-unit 64` together with E031.
+The row above is the 0.27.x observation. It is not a verdict on 0.33.0.
 | KV fp8 | Smaller attention pages | Works. Does **not** cause the MTP salad. |
 | Mamba state bf16 vs fp32 | Page size / block-size math | Precision tweak. Does **not** fix poisoned slots. |
 
@@ -417,6 +426,11 @@ validation with real traffic was ongoing at the time of writing.
 
 Superseded by the current stack in [README.md](README.md). Kept for anyone on
 vLLM 0.25–0.28.
+
+2026-11-28: production is vLLM 0.33.0 patch set v2, not the 2026-08 blocks below.
+See the README for the switches, the KV pool (466,666 tokens), and the open items
+(E041 is not in v2; kv_probe was not run on v2; more than 4 concurrent requests and
+preemption were not measured).
 
 **What we ran in 2026-08**
 
