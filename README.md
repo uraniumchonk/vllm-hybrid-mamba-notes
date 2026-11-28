@@ -298,7 +298,7 @@ instance; code, prose and mixed prompts, 2 reps each.
 | + E005 | 21.0–21.3 | 2026-11-03 |
 | + E006a/b/c | 19.74–19.91 | 2026-11-04 |
 | + CPU governor `performance` | 19.58–19.71 | 2026-11-04 |
-| + FlashInfer PCIe IPC all-reduce (patch set v1) | 19.28–19.42 | 2026-11-04 |
+| + FlashInfer PCIe IPC all-reduce (the 2026-11-04 production set) | 19.28–19.42 | 2026-11-04 |
 | for reference: vLLM 0.33.0 without speculative decoding | 14.23–14.31 | 2026-11-03 |
 
 The step without speculation is shorter but yields one token per step.
