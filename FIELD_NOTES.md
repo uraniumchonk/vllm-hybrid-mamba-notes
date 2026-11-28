@@ -157,11 +157,11 @@ Do not hold #4253 for the leftover retrieve bug.
 | `mamba-cache-mode=align` | Snapshot recurrent state only at block boundaries | Required for GDN + prefix cache / LMCache |
 | `mamba-cache-mode=all` | Snapshot every `i * block_size` | Not the LMCache-validated combo; DSpark+MRv2 also crashes here |
 | `--prefix-match-unit N` | Finer-than-block hits (0.27.x) | We saw occasional misalignment with LMCache and removed it |
-
-2026-11-13, vLLM 0.33.0: production sets `--prefix-match-unit 64` together with E031.
-The row above is the 0.27.x observation. It is not a verdict on 0.33.0.
 | KV fp8 | Smaller attention pages | Works. Does **not** cause the MTP salad. |
 | Mamba state bf16 vs fp32 | Page size / block-size math | Precision tweak. Does **not** fix poisoned slots. |
+
+2026-11-13, vLLM 0.33.0: production sets `--prefix-match-unit 64` together with E031.
+The `--prefix-match-unit N` row above is the 0.27.x observation. It is not a verdict on 0.33.0.
 
 ### Hybrid block-size constraint (do not skip)
 
