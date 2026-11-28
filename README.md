@@ -266,8 +266,8 @@ What v2 costs, what it leaves unchanged, and what is open:
   2.46 s); v2 computed one of the four again in the one run we have (decode wall 28.3 s).
   Cause not examined. With a test LMCache attached, v2's second round took 2.20 s.
 - Open: 4 concurrent cold prompts of 1K to 16K tokens, test instance, LMCache off. Mean
-  prefill tok/s at 4K is 1,483.1 without patches and 1,218.1 with v2. The last request's
-  first-token time in that cell is 5.836 s and 5.785 s. The run record also places v1 at
+  prefill tok/s at 4K is 1,483.1 without patches and 1,218.1 with v2. The p99
+  first-token time of the four requests in that cell is 5.836 s and 5.785 s. The run record also places v1 at
   1,219 beside those two. The 4K × 4 v1 reading on the live instance, LMCache on, is
   1,218.9 tok/s, a different instance from the pair above. Cause not examined.
 - E041 is not in v2. kv_probe was not run on v2. More than 4 concurrent requests and
